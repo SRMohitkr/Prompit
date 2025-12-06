@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prompit</title>
+    <link rel="stylesheet" href="style.css">
+    <meta name="description" content="A beautiful, local-storage based prompt organizer.">
+</head>
+
+<body>
+
+    <div class="app-container">
+        <!-- Header -->
+        <header class="glass-panel">
+            <div class="logo-area">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                    <line x1="16" y1="13" x2="8" y2="13"></line>
+                    <line x1="16" y1="17" x2="8" y2="17"></line>
+                    <polyline points="10 9 9 9 8 9"></polyline>
+                </svg>
+                <h1>Prompit Saver</h1>
+            </div>
+
+            <div class="controls">
+                <div class="search-box">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                    </svg>
+                    <input type="text" id="searchInput" placeholder="Search prompts...">
+                </div>
+
+                <div class="custom-dropdown" id="customCategoryDropdown">
+                    <div class="dropdown-selected" tabindex="0">All Categories</div>
+                    <div class="dropdown-options">
+                        <div class="dropdown-option" data-value="all">All Categories</div>
+                        <div class="dropdown-option" data-value="coding">Coding</div>
+                        <div class="dropdown-option" data-value="writing">Writing</div>
+                        <div class="dropdown-option" data-value="art">Art</div>
+                        <div class="dropdown-option" data-value="other">Other</div>
+                    </div>
+                </div>
+
+                <div class="custom-dropdown" id="settingsDropdown">
+                    <button id="settingsBtn" class="icon-btn" title="Settings">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="3"></circle>
+                            <path
+                                d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z">
+                            </path>
+                        </svg>
+                    </button>
+                    <div class="dropdown-options" style="right: 0; left: auto; width: 200px;">
+                        <div class="dropdown-option" id="themeOption">
+                            <span class="icon">🌓</span>
+                            <span class="text">Switch Theme</span>
+                        </div>
+                        <div class="dropdown-option" id="exportOption">
+                            <span class="icon">📥</span>
+                            <span class="text">Export JSON</span>
+                        </div>
+                        <div class="dropdown-option" id="importOption">
+                            <span class="icon">📤</span>
+                            <span class="text">Import JSON</span>
+                        </div>
+                    </div>
+                </div>
+                <input type="file" id="fileInput" accept=".json" style="display: none;">
+            </div>
+        </header>
+
+        <!-- Quick Paste Area -->
+        <div class="paste-area glass-panel">
+            <textarea id="quickPaste" placeholder="Paste prompt here to add quickly..."></textarea>
+            <button id="quickAddBtn">Quick Add</button>
+        </div>
+
+        <!-- Main Grid -->
+        <main id="promptGrid" class="prompt-grid">
+            <!-- Prompts will be injected here -->
+        </main>
+    </div>
+
+    <!-- Floating Action Button -->
+    <button id="fab" class="fab" title="Add New Prompt">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+        </svg>
+    </button>
+
+    <!-- Modal -->
+    <div id="modalOverlay" class="modal-overlay hidden">
+        <div class="modal glass-panel">
+            <div class="modal-header">
+                <h2 id="modalTitle">Add Prompt</h2>
+                <button id="closeModal" class="close-btn">&times;</button>
+            </div>
+            <form id="promptForm">
+                <input type="hidden" id="promptId">
+                <div class="form-group">
+                    <label for="title">Title</label>
+                    <input type="text" id="title" placeholder="Enter title (optional)">
+                </div>
+                <div class="form-group">
+                    <label for="category">Category</label>
+                    <div class="custom-dropdown" id="modalCategoryDropdown" style="width: 100%;">
+                        <div class="dropdown-selected" tabindex="0">Select Category</div>
+                        <div class="dropdown-options">
+                            <!-- Options populated by JS -->
+                        </div>
+                    </div>
+                    <input type="hidden" id="category" value="">
+                </div>
+                <div class="form-group">
+                    <label for="body">Prompt</label>
+                    <textarea id="body" rows="5" placeholder="Enter your prompt here..." required></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="tags">Tags (comma separated)</label>
+                    <input type="text" id="tags" placeholder="e.g. python, web, story">
+                </div>
+                <div class="form-actions">
+                    <button type="button" id="autoFillBtn" class="secondary-btn"
+                        title="Auto-fill metadata from body text">✨ Auto-Fill</button>
+                    <button type="submit" class="primary-btn">Save Prompt</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast hidden">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="20 6 9 17 4 12"></polyline>
+        </svg>
+        <span id="toastMessage">Saved!</span>
+    </div>
+
+    <!-- About Us Section -->
+    <section class="about-section glass-panel">
+        <h2>About Prompit</h2>
+        <p>Prompt Saver is your personal sanctuary for creativity. Designed for writers, coders, and artists, it helps
+            you organize, store, and quickly access your most valuable prompts. Whether you're crafting the next great
+            novel, debugging complex code, or generating AI art, we keep your inspiration just a click away.</p>
+        <div class="features-grid">
+            <div class="feature-item">
+                <span class="feature-icon">⚡</span>
+                <h3>Fast Access</h3>
+                <p>Instant search and quick-copy ensure your workflow never breaks.</p>
+            </div>
+            <div class="feature-item">
+                <span class="feature-icon">🔒</span>
+                <h3>Local & Private</h3>
+                <p>Your data stays in your browser. No cloud, no tracking, just you.</p>
+            </div>
+            <div class="feature-item">
+                <span class="feature-icon">🎨</span>
+                <h3>Beautiful Design</h3>
+                <p>A clean, glassmorphic interface that inspires you to create.</p>
+            </div>
+        </div>
+    </section>
+
+    <footer class="app-footer glass-panel">
+        <div class="footer-text">Made with <span>❤️</span> by SR.Mohitkr</div>
+        <div class="footer-links">
+            <a href="https://youtube.com" target="_blank" title="YouTube" class="youtube-link">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path
+                        d="M22.54 6.42a2.78 2.78 0 0 0-1.94-2C18.88 4 12 4 12 4s-6.88 0-8.6.46a2.78 2.78 0 0 0-1.94 2A29 29 0 0 0 1 11.75a29 29 0 0 0 .46 5.33A2.78 2.78 0 0 0 3.4 19c1.72.46 8.6.46 8.6.46s6.88 0 8.6-.46a2.78 2.78 0 0 0 1.94-2 29 29 0 0 0 .46-5.25 29 29 0 0 0-.46-5.33z" />
+                    <polygon points="9.75 15.02 15.5 11.75 9.75 8.48 9.75 15.02" />
+                </svg>
+            </a>
+            <a href="mailto:sr.mohitkr@gmail.com" title="Gmail" class="gmail-link">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+                    <polyline points="22,6 12,13 2,6" />
+                </svg>
+            </a>
+            <a href="https://facebook.com" target="_blank" title="Facebook" class="facebook-link">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z" />
+                </svg>
+            </a>
+        </div>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+
+</html>
