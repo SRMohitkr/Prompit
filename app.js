@@ -1,14 +1,259 @@
-document.addEventListener('DOMContentLoaded', () => {
-    // State
-    let prompts = JSON.parse(localStorage.getItem('prompts')) || [];
-    let categories = JSON.parse(localStorage.getItem('categories')) || ['coding', 'writing', 'art', 'email', 'youtube', 'marketing', 'research', 'other'];
+// app.js (UPDATED) - Supabase sync + offline queue + UI hooks + animations
+// -----------------------------
+// Uses window.SUPABASE_URL and window.SUPABASE_ANON_KEY and window.supabase (CDN)
+// Make sure index.html includes:
+// <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
+// <script src="./cloudConfig.js"></script>  // defines window.SUPABASE_URL and window.SUPABASE_ANON_KEY
+// <script src="./app.js"></script>         // this file
+// -----------------------------
 
-    // Theme Initialization
+// Initialize Supabase using window variables
+const supabase = window.supabase.createClient(
+    window.SUPABASE_URL,
+    window.SUPABASE_ANON_KEY
+);
+
+// Create or load device_id (acts like an account id — no login)
+let device_id = localStorage.getItem("device_id");
+if (!device_id) {
+    device_id = crypto.randomUUID();
+    localStorage.setItem("device_id", device_id);
+}
+console.log("device_id:", device_id);
+
+// Offline queue stored in localStorage key "offlineQueue"
+let offlineQueue = JSON.parse(localStorage.getItem('offlineQueue') || '[]');
+
+// Local prompts are persisted in localStorage under key "prompts"
+// We'll keep using that for instant UI and fallback when cloud fails
+
+/* ---------- Cloud save / load / sync helpers ---------- */
+async function savePromptToSupabase(prompt) {
+  // prompt = { id, cloud_id?, title, body, tags, favorite, date }
+  // If prompt.cloud_id exists -> update. Else -> insert and set cloud_id.
+  try {
+    if (prompt.cloud_id) {
+      // Update existing row
+      const { data, error } = await supabase
+        .from("prompts")
+        .update({
+          title: prompt.title,
+          body: prompt.body,
+          tags: Array.isArray(prompt.tags) ? prompt.tags.join(",") : (prompt.tags || ""),
+          favorite: !!prompt.favorite
+        })
+        .eq('id', prompt.cloud_id);
+
+      if (error) {
+        console.error("Cloud update failed:", error);
+        // queue for offline
+        queueOffline(prompt);
+        return null;
+      }
+      return data && data[0] ? data[0] : null;
+    } else {
+      // Insert new row, include client id (local id) via metadata if possible
+      const { data, error } = await supabase
+        .from("prompts")
+        .insert([{
+          device_id: device_id,
+          title: prompt.title || null,
+          body: prompt.body || "",
+          tags: Array.isArray(prompt.tags) ? prompt.tags.join(",") : (prompt.tags || ""),
+          favorite: !!prompt.favorite
+        }])
+        .select(); // return inserted rows
+
+      if (error) {
+        console.error("Cloud insert failed:", error);
+        queueOffline(prompt);
+        return null;
+      }
+
+      // Supabase returns inserted row with id (uuid)
+      const inserted = data && data[0];
+      if (inserted) {
+        // attach cloud_id to local prompt and persist localStorage
+        prompt.cloud_id = inserted.id;
+        // Save cloud_id locally (so future edits/deletes map)
+        persistPromptCloudId(prompt.id, inserted.id);
+      }
+      return inserted;
+    }
+  } catch (err) {
+    console.error("savePromptToSupabase error", err);
+    queueOffline(prompt);
+    return null;
+  }
+}
+
+function queueOffline(prompt) {
+  // Keep a minimal copy to re-send later
+  const copy = {
+    title: prompt.title,
+    body: prompt.body,
+    tags: Array.isArray(prompt.tags) ? prompt.tags.join(",") : (prompt.tags || ""),
+    favorite: !!prompt.favorite,
+    localId: prompt.id
+  };
+  offlineQueue.push(copy);
+  localStorage.setItem('offlineQueue', JSON.stringify(offlineQueue));
+}
+
+/* Try to sync offline queue to Supabase */
+async function syncOfflineQueue() {
+  if (!offlineQueue || offlineQueue.length === 0) return;
+  const queue = [...offlineQueue];
+  for (const item of queue) {
+    try {
+      const { data, error } = await supabase
+        .from("prompts")
+        .insert([{
+          device_id: device_id,
+          title: item.title,
+          body: item.body,
+          tags: item.tags,
+          favorite: item.favorite
+        }])
+        .select();
+
+      if (error) {
+        console.error("sync error:", error);
+        // stop processing to avoid infinite loops when offline still
+        return;
+      }
+
+      // On success, map returned id back to local prompt (if exists)
+      const inserted = data && data[0];
+      if (inserted) {
+        // find local prompt by localId and attach cloud_id
+        const pIndex = prompts.findIndex(p => p.id === item.localId);
+        if (pIndex > -1) {
+          prompts[pIndex].cloud_id = inserted.id;
+        }
+      }
+      // remove item from offlineQueue
+      offlineQueue = offlineQueue.filter(q => q.localId !== item.localId);
+      localStorage.setItem('offlineQueue', JSON.stringify(offlineQueue));
+    } catch (err) {
+      console.error("syncOfflineQueue exception", err);
+      return;
+    }
+  }
+  // persist changes
+  saveToLocalStorage();
+  showToast("Offline prompts synced!");
+}
+
+/* Load prompts from cloud for this device id */
+async function loadPromptsFromSupabaseAndMerge() {
+  try {
+    const { data, error } = await supabase
+      .from("prompts")
+      .select("*")
+      .eq("device_id", device_id)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("loadPromptsFromSupabase error:", error);
+      // fallback to local prompts
+      renderPrompts();
+      return;
+    }
+
+    if (!Array.isArray(data) || data.length === 0) {
+      // No cloud prompts — keep local prompts as-is
+      renderPrompts();
+      return;
+    }
+
+    // Merge strategy: prefer cloud items, but keep local-only items that aren't on cloud
+    const cloudByBody = new Map();
+    for (const row of data) {
+      // convert to local prompt shape
+      const local = {
+        id: row.id, // use cloud uuid as id so local and cloud are same (safe)
+        cloud_id: row.id,
+        title: row.title || (autoGenerateTitle(row.body || "")),
+        body: row.body || "",
+        tags: (row.tags || "").toString().split(',').map(t => t.trim()).filter(Boolean),
+        date: row.created_at || new Date().toISOString(),
+        favorite: !!row.favorite,
+      };
+      cloudByBody.set(local.body, local);
+    }
+
+    // keep any local prompts that aren't matched by exact body
+    const merged = [];
+    const localPrompts = JSON.parse(localStorage.getItem('prompts') || '[]');
+
+    // Add cloud prompts first
+    for (const v of cloudByBody.values()) merged.push(v);
+
+    // add local-only ones (by body mismatch)
+    for (const lp of localPrompts) {
+      if (!cloudByBody.has(lp.body)) {
+        // ensure it has an id
+        if (!lp.id) lp.id = Date.now().toString();
+        merged.push(lp);
+      }
+    }
+
+    prompts = merged;
+    saveToLocalStorage();
+    renderPrompts();
+
+  } catch (err) {
+    console.error("loadPromptsFromSupabaseAndMerge exception", err);
+    renderPrompts(); // fallback
+  }
+}
+
+/* Persist cloud_id to local prompt (helper) */
+function persistPromptCloudId(localId, cloudId) {
+  try {
+    const idx = prompts.findIndex(p => p.id === localId);
+    if (idx > -1) {
+      prompts[idx].cloud_id = cloudId;
+      // Optionally replace local id with cloud id (to simplify) — but we keep local id as-is to avoid UI mismatch
+      saveToLocalStorage();
+    }
+  } catch (e) {
+    console.error("persistPromptCloudId failed", e);
+  }
+}
+
+/* Save cloud set to local storage (overwrite) */
+function saveCloudToLocal(cloudRows) {
+  const mapped = cloudRows.map(row => ({
+    id: row.id,
+    cloud_id: row.id,
+    title: row.title || autoGenerateTitle(row.body || ""),
+    body: row.body || "",
+    tags: (row.tags || "").toString().split(',').map(t => t.trim()).filter(Boolean),
+    date: row.created_at || new Date().toISOString(),
+    favorite: !!row.favorite
+  }));
+  prompts = mapped;
+  saveToLocalStorage();
+}
+
+/* ---------- End cloud helpers ---------- */
+
+/* ---------- Existing app code (slightly adapted) ---------- */
+
+// We'll keep prompts and categories in top-level scope so cloud functions can update them
+let prompts = JSON.parse(localStorage.getItem('prompts')) || [];
+let categories = JSON.parse(localStorage.getItem('categories')) || ['coding', 'writing', 'art', 'email', 'youtube', 'marketing', 'research', 'other'];
+
+/* DOM-ready initialization */
+document.addEventListener('DOMContentLoaded', () => {
     // Theme Initialization
     const savedTheme = localStorage.getItem('theme') || 'dark';
     document.documentElement.setAttribute('data-theme', savedTheme);
     let currentTheme = savedTheme;
-    // Onboarding: Add Welcome Prompt if empty
+
+    // If no prompts, add welcome
     if (prompts.length === 0) {
         prompts = [{
             id: 'welcome-guide',
@@ -34,13 +279,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const modalCategory = document.getElementById('modalCategory');
     const autoFillBtn = document.getElementById('autoFillBtn');
     const searchInput = document.getElementById('searchInput');
-    // const categoryFilter = document.getElementById('categoryFilter'); // Removed
     const customCategoryDropdown = document.getElementById('customCategoryDropdown');
     const dropdownSelected = customCategoryDropdown.querySelector('.dropdown-selected');
     const dropdownOptions = customCategoryDropdown.querySelector('.dropdown-options');
     let currentCategory = 'all';
 
-    // Modal Dropdown Elements
     const modalCategoryDropdown = document.getElementById('modalCategoryDropdown');
     const modalDropdownSelected = modalCategoryDropdown.querySelector('.dropdown-selected');
     const modalDropdownOptions = modalCategoryDropdown.querySelector('.dropdown-options');
@@ -48,19 +291,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const quickPaste = document.getElementById('quickPaste');
     const quickAddBtn = document.getElementById('quickAddBtn');
     const toast = document.getElementById('toast');
-    const exportBtn = document.getElementById('exportBtn'); // Removed
-    const importBtn = document.getElementById('importBtn'); // Removed
     const fileInput = document.getElementById('fileInput');
 
-    // Settings Menu Elements
     const settingsBtn = document.getElementById('settingsBtn');
     const settingsDropdown = document.getElementById('settingsDropdown');
     const themeOption = document.getElementById('themeOption');
     const exportOption = document.getElementById('exportOption');
     const importOption = document.getElementById('importOption');
-
-    // Update UI based on initial theme
-    updateThemeUI();
 
     // Icons
     const icons = {
@@ -77,7 +314,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // Onboarding: Pulse FAB if welcome prompt is present
     if (prompts.some(p => p.id === 'welcome-guide')) {
         fab.classList.add('pulse-animation');
-        // Stop pulsing after 5 seconds or on click
         setTimeout(() => fab.classList.remove('pulse-animation'), 5000);
         fab.addEventListener('click', () => fab.classList.remove('pulse-animation'), { once: true });
     }
@@ -90,20 +326,15 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     promptForm.addEventListener('submit', handleFormSubmit);
     searchInput.addEventListener('input', renderPrompts);
-    searchInput.addEventListener('input', renderPrompts);
-    // categoryFilter.addEventListener('change', renderPrompts); // Removed
 
-    // Custom Dropdown Event Listeners
     dropdownSelected.addEventListener('click', (e) => {
         e.stopPropagation();
         customCategoryDropdown.classList.toggle('open');
     });
 
-    // Event Delegation for Custom Dropdown Options
     dropdownOptions.addEventListener('click', (e) => {
         const option = e.target.closest('.dropdown-option');
         if (!option) return;
-
         e.stopPropagation();
         const value = option.dataset.value;
         const text = option.textContent;
@@ -112,7 +343,6 @@ document.addEventListener('DOMContentLoaded', () => {
         dropdownSelected.textContent = text;
         customCategoryDropdown.classList.remove('open');
 
-        // Update selected style
         const allOptions = dropdownOptions.querySelectorAll('.dropdown-option');
         allOptions.forEach(item => item.classList.remove('selected'));
         option.classList.add('selected');
@@ -120,7 +350,6 @@ document.addEventListener('DOMContentLoaded', () => {
         renderPrompts();
     });
 
-    // Modal Dropdown Event Listeners
     modalDropdownSelected.addEventListener('click', (e) => {
         e.stopPropagation();
         modalCategoryDropdown.classList.toggle('open');
@@ -129,7 +358,6 @@ document.addEventListener('DOMContentLoaded', () => {
     modalDropdownOptions.addEventListener('click', (e) => {
         const option = e.target.closest('.dropdown-option');
         if (!option) return;
-
         e.stopPropagation();
         const value = option.dataset.value;
         const text = option.textContent;
@@ -146,10 +374,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 categoryInput.value = formattedCat;
                 modalDropdownSelected.textContent = formattedCat.charAt(0).toUpperCase() + formattedCat.slice(1);
 
-                // Update selected style
                 const allOptions = modalDropdownOptions.querySelectorAll('.dropdown-option');
                 allOptions.forEach(item => item.classList.remove('selected'));
-                // Find the new option we just added/rendered
                 const newOption = modalDropdownOptions.querySelector(`[data-value="${formattedCat}"]`);
                 if (newOption) newOption.classList.add('selected');
             }
@@ -157,7 +383,6 @@ document.addEventListener('DOMContentLoaded', () => {
             categoryInput.value = value;
             modalDropdownSelected.textContent = text;
 
-            // Update selected style
             const allOptions = modalDropdownOptions.querySelectorAll('.dropdown-option');
             allOptions.forEach(item => item.classList.remove('selected'));
             option.classList.add('selected');
@@ -176,7 +401,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     quickAddBtn.addEventListener('click', handleQuickAdd);
 
-    // Settings Menu Listeners
     settingsBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         settingsDropdown.classList.toggle('open');
@@ -197,26 +421,19 @@ document.addEventListener('DOMContentLoaded', () => {
         settingsDropdown.classList.remove('open');
     });
 
-    // Close settings dropdown when clicking outside
     document.addEventListener('click', (e) => {
         if (!settingsDropdown.contains(e.target)) {
             settingsDropdown.classList.remove('open');
         }
     });
 
-    // exportBtn.addEventListener('click', exportData); // Removed
-    // importBtn.addEventListener('click', () => fileInput.click()); // Removed
-    // savePromptBtn.addEventListener('click', savePrompt); 
     autoFillBtn.addEventListener('click', handleAutoFill);
-    // themeToggle.addEventListener('click', toggleTheme); // Removed
 
-    // FAB / Footer Interaction
     const footer = document.querySelector('.app-footer');
     const aboutSection = document.querySelector('.about-section');
 
     if (fab) {
         const observer = new IntersectionObserver((entries) => {
-            // Check if ANY of the observed elements are intersecting
             const isIntersecting = entries.some(entry => entry.isIntersecting);
 
             if (isIntersecting) {
@@ -232,8 +449,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (aboutSection) observer.observe(aboutSection);
     }
 
-    // Functions
-
+    // Functions (localStorage helpers & UI)
     function saveToLocalStorage() {
         localStorage.setItem('prompts', JSON.stringify(prompts));
     }
@@ -263,7 +479,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function renderCategoryOptions() {
-        // 1. Update Modal Dropdown
         const currentVal = categoryInput.value;
         modalDropdownOptions.innerHTML = '';
 
@@ -286,22 +501,17 @@ document.addEventListener('DOMContentLoaded', () => {
         addNew.textContent = '+ Add New Category';
         modalDropdownOptions.appendChild(addNew);
 
-        // Restore selection if valid, else default to first category
         if (categories.includes(currentVal)) {
             categoryInput.value = currentVal;
             modalDropdownSelected.textContent = currentVal.charAt(0).toUpperCase() + currentVal.slice(1);
         } else if (categories.length > 0 && !currentVal) {
-            // Only default if empty (initial load)
             categoryInput.value = categories[0];
             modalDropdownSelected.textContent = categories[0].charAt(0).toUpperCase() + categories[0].slice(1);
         }
 
-        // 2. Update Header Dropdown
-        // Preserve current selection logic
         const dropdownOptionsContainer = document.querySelector('#customCategoryDropdown .dropdown-options');
         dropdownOptionsContainer.innerHTML = '';
 
-        // Add 'All' option
         const allDiv = document.createElement('div');
         allDiv.className = 'dropdown-option';
         if (currentCategory === 'all') allDiv.classList.add('selected');
@@ -328,17 +538,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const analysis = analyzePrompt(text);
 
-        document.getElementById('title').value = analysis.title; // Changed modalTitle to document.getElementById('title')
-        document.getElementById('tags').value = analysis.tags.join(', '); // Changed modalTags to document.getElementById('tags')
+        document.getElementById('title').value = analysis.title;
+        document.getElementById('tags').value = analysis.tags.join(', ');
 
-        // Update Category
-        document.getElementById('category').value = analysis.category; // Changed modalCategory to document.getElementById('category')
-        // Update custom dropdown UI
+        document.getElementById('category').value = analysis.category;
         const dropdown = document.getElementById('modalCategoryDropdown');
         const selectedDisplay = dropdown.querySelector('.dropdown-selected');
         selectedDisplay.textContent = analysis.category.charAt(0).toUpperCase() + analysis.category.slice(1);
 
-        // Update options selection state
         dropdown.querySelectorAll('.dropdown-option').forEach(opt => {
             if (opt.dataset.value === analysis.category) {
                 opt.classList.add('selected');
@@ -357,19 +564,18 @@ document.addEventListener('DOMContentLoaded', () => {
         const category = currentCategory;
 
         const filteredPrompts = prompts.filter(p => {
-            const matchesSearch = p.title.toLowerCase().includes(searchTerm) ||
-                p.body.toLowerCase().includes(searchTerm) ||
-                p.tags.some(t => t.toLowerCase().includes(searchTerm));
+            const matchesSearch = (p.title || '').toLowerCase().includes(searchTerm) ||
+                (p.body || '').toLowerCase().includes(searchTerm) ||
+                (Array.isArray(p.tags) ? p.tags : (p.tags||"")).join(' ').toLowerCase().includes(searchTerm);
             const matchesCategory = category === 'all' || p.category === category;
             return matchesSearch && matchesCategory;
         });
 
-        // Sort by favorite then date (newest first)
         filteredPrompts.sort((a, b) => {
-            if (a.favorite === b.favorite) {
+            if ((a.favorite ? 1 : 0) === (b.favorite ? 1 : 0)) {
                 return new Date(b.date) - new Date(a.date);
             }
-            return b.favorite - a.favorite;
+            return (b.favorite ? 1 : 0) - (a.favorite ? 1 : 0);
         });
 
         if (filteredPrompts.length === 0) {
@@ -382,39 +588,44 @@ document.addEventListener('DOMContentLoaded', () => {
             card.className = 'prompt-card';
             card.setAttribute('data-id', prompt.id);
 
-            const tagsHtml = prompt.tags.map(tag => `<span class="tag">#${tag}</span>`).join('');
+            const tagsHtml = (Array.isArray(prompt.tags) ? prompt.tags : (prompt.tags||[])).map(tag => `<span class="tag">#${tag}</span>`).join('');
 
             card.innerHTML = `
                 <div class="card-header">
-                    <div class="card-title">${prompt.title}</div>
+                    <div class="card-title">${escapeHtml(prompt.title)}</div>
                     <div class="card-actions">
-                        <button class="icon-btn fav-btn ${prompt.favorite ? 'active' : ''}" onclick="toggleFavorite('${prompt.id}')" title="Toggle Favorite">
+                        <button class="icon-btn fav-btn ${prompt.favorite ? 'active' : ''}" data-fav="${prompt.id}" title="Toggle Favorite">
                             ${icons.star}
                         </button>
-                        <button class="icon-btn" onclick="copyPrompt('${prompt.id}')" title="Copy">
+                        <button class="icon-btn" data-copy="${prompt.id}" title="Copy">
                             ${icons.copy}
                         </button>
-                        <button class="icon-btn" onclick="editPrompt('${prompt.id}')" title="Edit">
+                        <button class="icon-btn" data-edit="${prompt.id}" title="Edit">
                             ${icons.edit}
                         </button>
-                        <button class="icon-btn" onclick="deletePrompt('${prompt.id}')" title="Delete" style="color: var(--danger-color)">
+                        <button class="icon-btn" data-delete="${prompt.id}" title="Delete" style="color: var(--danger-color)">
                             ${icons.trash}
                         </button>
                     </div>
                 </div>
-                <div class="category-badge">${prompt.category}</div>
+                <div class="category-badge">${escapeHtml(prompt.category || '')}</div>
                 <div class="card-body">${escapeHtml(prompt.body)}</div>
                 <div class="card-footer">
                     <div class="tags">${tagsHtml}</div>
                 </div>
             `;
+            // Attach event listeners (delegated)
+            card.querySelector('[data-copy]').addEventListener('click', () => window.copyPrompt(prompt.id));
+            card.querySelector('[data-edit]').addEventListener('click', () => window.editPrompt(prompt.id));
+            card.querySelector('[data-delete]').addEventListener('click', () => window.deletePrompt(prompt.id));
+            card.querySelector('[data-fav]').addEventListener('click', () => window.toggleFavorite(prompt.id));
+
             promptGrid.appendChild(card);
         });
     }
 
     function openModal(prompt = null) {
         modalOverlay.classList.remove('hidden');
-        // Small delay to allow display:flex to apply before opacity transition
         setTimeout(() => modalOverlay.classList.add('visible'), 10);
 
         if (prompt) {
@@ -422,10 +633,8 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('promptId').value = prompt.id;
             document.getElementById('title').value = prompt.title;
 
-            // Set Category
             categoryInput.value = prompt.category;
             modalDropdownSelected.textContent = prompt.category.charAt(0).toUpperCase() + prompt.category.slice(1);
-            // Update selected class in dropdown
             const options = modalDropdownOptions.querySelectorAll('.dropdown-option');
             options.forEach(opt => {
                 if (opt.dataset.value === prompt.category) opt.classList.add('selected');
@@ -433,13 +642,12 @@ document.addEventListener('DOMContentLoaded', () => {
             });
 
             document.getElementById('body').value = prompt.body;
-            document.getElementById('tags').value = prompt.tags.join(', ');
+            document.getElementById('tags').value = (Array.isArray(prompt.tags) ? prompt.tags.join(', ') : prompt.tags);
         } else {
             modalTitle.textContent = 'Add Prompt';
             promptForm.reset();
             document.getElementById('promptId').value = '';
 
-            // Reset Category to default
             if (categories.length > 0) {
                 categoryInput.value = categories[0];
                 modalDropdownSelected.textContent = categories[0].charAt(0).toUpperCase() + categories[0].slice(1);
@@ -457,7 +665,7 @@ document.addEventListener('DOMContentLoaded', () => {
         setTimeout(() => modalOverlay.classList.add('hidden'), 300);
     }
 
-    function handleFormSubmit(e) {
+    async function handleFormSubmit(e) {
         e.preventDefault();
         const id = document.getElementById('promptId').value;
         const title = document.getElementById('title').value;
@@ -472,7 +680,7 @@ document.addEventListener('DOMContentLoaded', () => {
             body,
             tags,
             date: new Date().toISOString(),
-            favorite: id ? prompts.find(p => p.id === id).favorite : false
+            favorite: id ? (prompts.find(p => p.id === id)?.favorite || false) : false
         };
 
         if (id) {
@@ -482,20 +690,33 @@ document.addEventListener('DOMContentLoaded', () => {
             prompts.unshift(promptData);
         }
 
+        // Persist locally immediately for instant UI
         saveToLocalStorage();
         renderPrompts();
         closeModalFunc();
         showToast('Prompt saved!');
+
+        // Try to save to cloud in background
+        // If it fails, savePromptToSupabase will queue it for offline sync
+        savePromptToSupabase(promptData).then(res => {
+          if (res && res.id) {
+            // attach cloud id locally if inserted
+            const idx = prompts.findIndex(p => p.id === promptData.id);
+            if (idx > -1) {
+              prompts[idx].cloud_id = res.id;
+              saveToLocalStorage();
+            }
+          }
+        });
     }
 
-    // Smart Prompt Extraction Logic
+    // Smart Prompt Extraction Logic (unchanged)
     function analyzePrompt(text) {
         const lowerText = text.toLowerCase();
         let category = 'other';
         let tags = [];
         let isLikelyFavorite = false;
 
-        // 1. Category Detection
         if (/(code|function|bug|js|python|java|html|css|react|node)/i.test(text)) category = 'coding';
         else if (/(email|cold email|outreach|newsletter|subject line)/i.test(text)) category = 'email';
         else if (/(youtube|video|thumbnail|hook|channel)/i.test(text) || (/(script)/i.test(text) && /(youtube|video)/i.test(text))) category = 'youtube';
@@ -503,34 +724,26 @@ document.addEventListener('DOMContentLoaded', () => {
         else if (/(summarize|analysis|research|study|paper|data)/i.test(text)) category = 'research';
         else if (/(art|image|draw|paint|design|logo)/i.test(text)) category = 'art';
         else if (/(write|story|article|blog|script|essay|poem)/i.test(text)) category = 'writing';
-        else category = 'other'; // Fallback to 'other' or 'general' if you prefer
+        else category = 'other';
 
-        // 2. Tag Generation (Simple Keyword Extraction)
         const possibleTags = ['youtube', 'script', 'fitness', 'hindi', 'coding', 'python', 'js', 'email', 'marketing', 'blog', 'story', 'research', 'summary', 'bug', 'fix'];
         possibleTags.forEach(tag => {
             if (lowerText.includes(tag)) {
                 tags.push(tag);
             }
         });
-        // Ensure at least 2 tags if possible, or generic ones
         if (tags.length === 0) tags.push(category);
         if (tags.length < 2 && category !== 'other') tags.push('prompt');
-        tags = tags.slice(0, 5); // Limit to 5
+        tags = tags.slice(0, 5);
 
-        // 3. Title Generation
-        // Remove common starting phrases
         let cleanText = text.replace(/^(write a|create a|act as a|generate a|give me a)\s+/i, '');
-        // Take first 4-7 words
         let words = cleanText.split(/\s+/);
         let title = words.slice(0, 6).join(' ');
         if (words.length > 6) title += '...';
-        // Capitalize Title
         title = title.replace(/\b\w/g, l => l.toUpperCase());
 
-        // 4. Auto Short Title
         let autoShortTitle = words.slice(0, 2).join(' ').replace(/\b\w/g, l => l.toUpperCase());
 
-        // 5. Favorite Detection
         if (text.length > 100 || /(advanced|framework|master|guide|comprehensive)/i.test(text)) {
             isLikelyFavorite = true;
         }
@@ -565,6 +778,17 @@ document.addEventListener('DOMContentLoaded', () => {
         renderPrompts();
         quickPaste.value = '';
         showToast('Prompt added with Smart Extraction!');
+
+        // Try cloud save in background
+        savePromptToSupabase(newPrompt).then(res => {
+          if (res && res.id) {
+            const idx = prompts.findIndex(p => p.id === newPrompt.id);
+            if (idx > -1) {
+              prompts[idx].cloud_id = res.id;
+              saveToLocalStorage();
+            }
+          }
+        });
     }
 
     function autoGenerateTitle(text) {
@@ -572,6 +796,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return words.slice(0, 4).join(' ') + (words.length > 4 ? '...' : '');
     }
 
+    // Toast (simple)
     function showToast(message) {
         const toastMsg = document.getElementById('toastMessage');
         toastMsg.textContent = message;
@@ -597,7 +822,7 @@ document.addEventListener('DOMContentLoaded', () => {
         downloadAnchorNode.remove();
     }
 
-    function importData(event) {
+    async function importData(event) {
         const file = event.target.files[0];
         if (!file) return;
 
@@ -607,20 +832,30 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         const reader = new FileReader();
-        reader.onload = function (e) {
+        reader.onload = async function (e) {
             try {
                 const importedPrompts = JSON.parse(e.target.result);
                 if (Array.isArray(importedPrompts)) {
-                    // Merge logic: avoid duplicates by ID
                     const currentIds = new Set(prompts.map(p => p.id));
                     let addedCount = 0;
 
-                    importedPrompts.forEach(p => {
+                    for (const p of importedPrompts) {
                         if (!currentIds.has(p.id)) {
+                            // insert locally
                             prompts.push(p);
                             addedCount++;
+                            // try save to cloud as background (attach local id)
+                            savePromptToSupabase(p).then(res => {
+                              if (res && res.id) {
+                                const idx = prompts.findIndex(x => x.id === p.id);
+                                if (idx > -1) {
+                                  prompts[idx].cloud_id = res.id;
+                                  saveToLocalStorage();
+                                }
+                              }
+                            });
                         }
-                    });
+                    }
 
                     saveToLocalStorage();
                     renderPrompts();
@@ -638,13 +873,29 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Expose functions to global scope for inline onclick handlers
-    window.deletePrompt = function (id) {
-        if (confirm('Are you sure you want to delete this prompt?')) {
-            prompts = prompts.filter(p => p.id !== id);
-            saveToLocalStorage();
-            renderPrompts();
-            showToast('Prompt deleted');
+    window.deletePrompt = async function (id) {
+        if (!confirm('Are you sure you want to delete this prompt?')) return;
+        // find the prompt
+        const prompt = prompts.find(p => p.id === id);
+        if (!prompt) return;
+        // If cloud_id exists, delete from cloud
+        if (prompt.cloud_id) {
+          try {
+            const { error } = await supabase.from('prompts').delete().eq('id', prompt.cloud_id);
+            if (error) {
+              console.error('Cloud delete failed', error);
+              showToast('Could not delete from cloud, deleted locally.');
+            }
+          } catch (err) {
+            console.error('delete exception', err);
+            showToast('Network error while deleting. Deleted locally.');
+          }
         }
+        // Remove locally
+        prompts = prompts.filter(p => p.id !== id);
+        saveToLocalStorage();
+        renderPrompts();
+        showToast('Prompt deleted');
     };
 
     window.editPrompt = function (id) {
@@ -652,12 +903,33 @@ document.addEventListener('DOMContentLoaded', () => {
         if (prompt) openModal(prompt);
     };
 
-    window.toggleFavorite = function (id) {
+    window.toggleFavorite = async function (id) {
         const prompt = prompts.find(p => p.id === id);
         if (prompt) {
             prompt.favorite = !prompt.favorite;
             saveToLocalStorage();
             renderPrompts();
+            // Update cloud if possible
+            if (prompt.cloud_id) {
+              try {
+                const { error } = await supabase.from('prompts').update({ favorite: prompt.favorite }).eq('id', prompt.cloud_id);
+                if (error) {
+                  console.error('favorite update failed', error);
+                  queueOffline(prompt);
+                }
+              } catch (err) {
+                console.error(err);
+                queueOffline(prompt);
+              }
+            } else {
+              // attempt to save as new entry on cloud
+              savePromptToSupabase(prompt).then(res => {
+                if (res && res.id) {
+                  prompt.cloud_id = res.id;
+                  saveToLocalStorage();
+                }
+              });
+            }
         }
     };
 
@@ -669,4 +941,30 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         }
     };
-});
+
+    // Sync offline queue on load and subscribe to realtime updates
+    (async function startupSync() {
+      // first try to sync any offline queued items
+      await syncOfflineQueue();
+      // then load cloud prompts and merge
+      await loadPromptsFromSupabaseAndMerge();
+
+      // subscribe to realtime changes for live sync (optional)
+      try {
+        const channel = supabase
+          .channel('public:prompts')
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'prompts' }, payload => {
+            // If change affects this device, reload
+            // simple approach: refresh full list
+            loadPromptsFromSupabaseAndMerge();
+          })
+          .subscribe();
+      } catch (e) {
+        console.warn('Realtime subscribe failed (not critical)', e);
+      }
+    })();
+
+    // Wire up file import input
+    fileInput.addEventListener('change', importData);
+
+}); // DOMContentLoaded end
