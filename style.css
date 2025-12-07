@@ -70,7 +70,7 @@ header {
 }
 
 .logo-area h1 {
-    font-size: 1.5rem;
+    font-size: clamp(1.2rem, 2vw + 1rem, 1.5rem);
     font-weight: 700;
 }
 
@@ -659,10 +659,7 @@ body.dark-mode #modalCategoryDropdown .dropdown-options {
 .footer-text {
     font-weight: 600;
     margin-bottom: 0;
-    background: linear-gradient(45deg, var(--primary-color), #8e44ad);
-    background-clip: text;
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+    color: var(--text-color);
     letter-spacing: 1px;
 }
 
@@ -753,7 +750,7 @@ body.dark-mode #modalCategoryDropdown .dropdown-options {
 }
 
 .about-section h2 {
-    font-size: 2.5rem;
+    font-size: clamp(2rem, 4vw + 1rem, 2.5rem);
     margin-bottom: 20px;
     background: linear-gradient(135deg, var(--primary-color), #8e44ad);
     background-clip: text;
@@ -843,7 +840,7 @@ body.dark-mode #modalCategoryDropdown .dropdown-options {
 }
 
 .feature-item h3 {
-    font-size: 1.4rem;
+    font-size: clamp(1.2rem, 1.5vw + 0.8rem, 1.4rem);
     margin-bottom: 15px;
     color: var(--text-color);
     font-weight: 700;
@@ -868,7 +865,7 @@ body.dark-mode #modalCategoryDropdown .dropdown-options {
     }
 }
 
-/* Tablet Portrait & Large Phones (768px and below) */
+/* Tablet Portrait (768px and below) */
 @media (max-width: 768px) {
     body {
         padding: 10px;
@@ -878,7 +875,52 @@ body.dark-mode #modalCategoryDropdown .dropdown-options {
         padding-bottom: 80px;
     }
 
-    /* Header */
+    /* About Section */
+    .about-section {
+        margin: 40px 0;
+        padding: 30px 20px;
+    }
+
+    .features-grid {
+        grid-template-columns: 1fr;
+        gap: 25px;
+    }
+
+    /* Footer */
+    .app-footer {
+        flex-direction: column;
+        gap: 20px;
+        text-align: center;
+        padding: 20px;
+    }
+
+    .footer-links {
+        justify-content: center;
+    }
+
+    /* FAB */
+    .fab {
+        bottom: 20px;
+        right: 20px;
+    }
+
+    .fab.up {
+        bottom: 140px;
+    }
+
+    /* Modal */
+    .modal {
+        width: 95%;
+        padding: 20px;
+        max-height: 90vh;
+        overflow-y: auto;
+    }
+}
+
+/* Mobile Layout (600px and below) */
+@media (max-width: 600px) {
+
+    /* Header - Stack on mobile */
     header {
         flex-direction: column;
         align-items: stretch;
@@ -918,55 +960,10 @@ body.dark-mode #modalCategoryDropdown .dropdown-options {
         width: 100%;
     }
 
-    /* Prompt Grid */
+    /* Prompt Grid - Single column */
     .prompt-grid {
         grid-template-columns: 1fr;
         gap: 20px;
-    }
-
-    /* About Section */
-    .about-section {
-        margin: 40px 0;
-        padding: 30px 20px;
-    }
-
-    .about-section h2 {
-        font-size: clamp(1.8rem, 5vw, 2.5rem);
-    }
-
-    .features-grid {
-        grid-template-columns: 1fr;
-        gap: 25px;
-    }
-
-    /* Footer */
-    .app-footer {
-        flex-direction: column;
-        gap: 20px;
-        text-align: center;
-        padding: 20px;
-    }
-
-    .footer-links {
-        justify-content: center;
-    }
-
-    /* FAB */
-    .fab {
-        bottom: 20px;
-        right: 20px;
-    }
-
-    .fab.up {
-        bottom: 140px;
-    }
-
-    /* Modal */
-    .modal {
-        width: 95%;
-        padding: 20px;
-        max-height: 90vh;
-        overflow-y: auto;
     }
 }
 
@@ -994,13 +991,11 @@ body.dark-mode #modalCategoryDropdown .dropdown-options {
 
     .fab.rectangular {
         width: 50px;
-        /* Revert to circle on very small screens if needed, or keep rect but smaller */
         padding-left: 0;
         justify-content: center;
     }
 
     .fab.rectangular::after {
         display: none;
-        /* Hide text on very small screens to save space */
     }
 }
