@@ -8,10 +8,6 @@
     <link rel="stylesheet" href="style.css">
     <meta name="description" content="A beautiful, local-storage based prompt organizer.">
 
-
-    <!-- Supabase Client -->
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
-
 </head>
 
 <body>
@@ -63,6 +59,9 @@
                         </svg>
                     </button>
                     <div class="dropdown-options" style="right: 0; left: auto; width: 200px;">
+                        <button id="exportBtn">Export</button>
+                        <button id="importBtn">Import</button>
+                        <input type="file" id="importFile" style="display:none;">
                         <div class="dropdown-option" id="themeOption">
                             <span class="icon">🌓</span>
                             <span class="text">Switch Theme</span>
@@ -205,9 +204,8 @@
 
     <!-- Your cloud config -->
     <script src="./cloudConfig.js"></script>
-
-    <!-- Your main app logic -->
-    <script src="./app.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="app.js"></script>
 
 </body>
 
