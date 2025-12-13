@@ -32,7 +32,8 @@
             <form id="authEmailForm" class="auth-step">
                 <div class="form-group">
                     <label for="emailInput">Email Address</label>
-                    <input type="email" id="emailInput" placeholder="name@example.com" required>
+                    <input type="email" id="emailInput" name="email" autocomplete="email" placeholder="name@example.com"
+                        required>
                 </div>
                 <button type="submit" class="primary-btn full-width" id="sendOtpBtn">
                     <span class="btn-text">Send Magic Code</span>
@@ -45,12 +46,18 @@
                 <div class="form-group">
                     <label>Enter 6-digit Code</label>
                     <div class="otp-container" id="otpContainer">
-                        <input type="text" maxlength="1" class="otp-input" pattern="[0-9]*" inputmode="numeric">
-                        <input type="text" maxlength="1" class="otp-input" pattern="[0-9]*" inputmode="numeric">
-                        <input type="text" maxlength="1" class="otp-input" pattern="[0-9]*" inputmode="numeric">
-                        <input type="text" maxlength="1" class="otp-input" pattern="[0-9]*" inputmode="numeric">
-                        <input type="text" maxlength="1" class="otp-input" pattern="[0-9]*" inputmode="numeric">
-                        <input type="text" maxlength="1" class="otp-input" pattern="[0-9]*" inputmode="numeric">
+                        <input type="text" maxlength="1" class="otp-input" name="otp[]" autocomplete="one-time-code"
+                            aria-label="Digit 1" pattern="[0-9]*" inputmode="numeric">
+                        <input type="text" maxlength="1" class="otp-input" name="otp[]" autocomplete="one-time-code"
+                            aria-label="Digit 2" pattern="[0-9]*" inputmode="numeric">
+                        <input type="text" maxlength="1" class="otp-input" name="otp[]" autocomplete="one-time-code"
+                            aria-label="Digit 3" pattern="[0-9]*" inputmode="numeric">
+                        <input type="text" maxlength="1" class="otp-input" name="otp[]" autocomplete="one-time-code"
+                            aria-label="Digit 4" pattern="[0-9]*" inputmode="numeric">
+                        <input type="text" maxlength="1" class="otp-input" name="otp[]" autocomplete="one-time-code"
+                            aria-label="Digit 5" pattern="[0-9]*" inputmode="numeric">
+                        <input type="text" maxlength="1" class="otp-input" name="otp[]" autocomplete="one-time-code"
+                            aria-label="Digit 6" pattern="[0-9]*" inputmode="numeric">
                     </div>
                 </div>
                 <button type="submit" class="primary-btn full-width" id="verifyOtpBtn">
@@ -114,7 +121,8 @@
                         <circle cx="11" cy="11" r="8"></circle>
                         <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
                     </svg>
-                    <input type="text" id="searchInput" placeholder="Search prompts...">
+                    <input type="text" id="searchInput" name="search" aria-label="Search prompts" autocomplete="off"
+                        placeholder="Search prompts...">
                 </div>
 
                 <div class="custom-dropdown" id="customCategoryDropdown">
@@ -169,13 +177,14 @@
                         </div>
                     </div>
                 </div>
-                <input type="file" id="fileInput" accept=".json" style="display: none;">
+                <input type="file" id="fileInput" name="import_file" accept=".json" style="display: none;">
             </div>
         </header>
 
         <!-- Quick Paste Area -->
         <div class="paste-area glass-panel">
-            <textarea id="quickPaste" placeholder="Paste prompt here to add quickly..."></textarea>
+            <textarea id="quickPaste" name="quick_paste" aria-label="Quick paste prompt"
+                placeholder="Paste prompt here to add quickly..."></textarea>
             <button id="quickAddBtn">Quick Add</button>
         </div>
 
@@ -205,7 +214,7 @@
                 <input type="hidden" id="promptId">
                 <div class="form-group">
                     <label for="title">Title</label>
-                    <input type="text" id="title" placeholder="Enter title (optional)">
+                    <input type="text" id="title" name="title" autocomplete="off" placeholder="Enter title (optional)">
                 </div>
                 <div class="form-group">
                     <label for="category">Category</label>
@@ -215,15 +224,16 @@
                             <!-- Options populated by JS -->
                         </div>
                     </div>
-                    <input type="hidden" id="category" value="">
+                    <input type="hidden" id="category" name="category" value="">
                 </div>
                 <div class="form-group">
                     <label for="body">Prompt</label>
-                    <textarea id="body" rows="5" placeholder="Enter your prompt here..." required></textarea>
+                    <textarea id="body" name="body" rows="5" placeholder="Enter your prompt here..."
+                        required></textarea>
                 </div>
                 <div class="form-group">
                     <label for="tags">Tags (comma separated)</label>
-                    <input type="text" id="tags" placeholder="e.g. python, web, story">
+                    <input type="text" id="tags" name="tags" autocomplete="off" placeholder="e.g. python, web, story">
                 </div>
                 <div class="form-actions">
                     <button type="button" id="autoFillBtn" class="secondary-btn"

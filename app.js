@@ -148,46 +148,67 @@ let currentFilter = 'all';
   // ADD THIS: Auth State Observer
   if (supabase) {
     supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_IN' && session) {
+      // Handle both explicit SIGNED_IN and page load INITIAL_SESSION
+      if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && session) {
+        user_session = session;
         hideAuthOverlay();
         renderUserProfile(session.user);
-        // Sync data if needed
-        await syncData();
-      } else if (event === 'SIGNED_OUT') {
-        user_session = null;
-        renderUserProfile(null);
-        updateAuthUI(); // Update legacy UI
-        renderPrompts(); // Clear user prompts
-        showToast('Logged out');
+        updateAuthUI();
 
-        // Hide banner on logout
-        const banner = document.getElementById('welcome-banner');
-        if (banner) banner.classList.add('hidden');
-      }
-    });
-
-    // Initial check for banner if already logged in handled by syncData flow? 
-    // Actually initApp checks session. We should ensure banner shows if session exists initially.
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) {
+        // Show banner if session exists (and not dismissed previously if we had that logic)
         const banner = document.getElementById('welcome-banner');
         if (banner) banner.classList.remove('hidden');
+
+        // Sync only if not just a refresh? 
+        // Ideally syncData handles idempotency.
+        if (event === 'SIGNED_IN') {
+          await syncData();
+        } else {
+          // For INITIAL_SESSION, maybe we just load? 
+          // syncData calls loadPromptsFromSupabaseAndMerge.
+          // Let's call it to be safe and ensure data is fresh.
+          await syncData();
+        }
+
+      } else if (event === 'SIGNED_OUT') {
+        // Only run cleanup if not already done (avoid double toast)
+        if (user_session) {
+          user_session = null;
+          renderUserProfile(null);
+          updateAuthUI();
+          renderPrompts();
+          showToast('Logged out');
+          const banner = document.getElementById('welcome-banner');
+          if (banner) banner.classList.add('hidden');
+        }
       }
     });
   }
 
-  // Auth Check
+  // Auth Check - Removed manual getSession call as onAuthStateChange handles INITIAL_SESSION now.
+  // We keep the else block for local-only non-supabase flow if configured without credentials?
+  // But wait, if we rely on INITIAL_SESSION, we might need to wait for it?
+  // Actually, onAuthStateChange fires 'INITIAL_SESSION' very quickly on load.
+  // However, for pure Guest Mode (no session ever), we might need to handle the case where no event fires?
+  // Supabase Auth listener usually handles the session check internally.
+  // BUT the previous code had a specific check:
+  // if (!user_session) showAuthOverlay();
+
+  // Let's rely on the listener. If no session comes in, we might stay in "guest" implicitly?
+  // But we need to show the Auth Overlay if appropriate.
+
+  // To match previous behavior safely:
   if (supabase) {
     const { data: { session } } = await supabase.auth.getSession();
-    user_session = session;
-    updateAuthUI();
-
-    // If not logged in, always show auth overlay
-    if (!user_session) {
+    if (!session) {
+      // If no session, show overlay (Guest mode prompting)
+      // Check if we previously skipped? 
+      // For now, just show it as per original logic
       showAuthOverlay();
-    } else {
-      await syncData();
+      // Also render empty/public prompts
+      renderPrompts();
     }
+    // If session exists, onAuthStateChange will handle it (INITIAL_SESSION)
   } else {
     // No Supabase, just render local
     renderPrompts();
@@ -333,21 +354,7 @@ function setupAuthListeners() {
   }
 
   // Logout
-  logoutOption.addEventListener('click', async () => {
-    const { error } = await supabase.auth.signOut();
-    if (!error) {
-      user_session = null;
-      updateAuthUI();
-      showToast('Logged out');
-      // Optional: clear local prompts on logout or keep them?
-      // For now, we prefer keeping them to avoid data loss surprise.
-      // But we must reload to filter only device_id items (if backend enforces it).
-      // Ideally, logout means we revert to Guest Mode
-      renderPrompts();
-      // Optionally remove skipped_auth to auto-show next time?
-      // localStorage.removeItem('skipped_auth');
-    }
-  });
+  logoutOption.addEventListener('click', handleLogout);
 }
 
 function updateAuthUI() {
@@ -1203,17 +1210,18 @@ function renderUserProfile(user) {
   }
 
   const initial = user.email.charAt(0).toUpperCase();
-  // Simple inline styles or we can add to CSS. Keeping it scoped.
+  // Use CSS classes defined in style.css for consistent z-index and appearance
   slot.innerHTML = `
-        <div class="profile-ui-container" style="position: relative; margin-left: 15px;">
-             <div class="profile-avatar" style="width: 36px; height: 36px; background: #6c5ce7; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; cursor: pointer; user-select: none;">
+        <div class="profile-ui-container">
+             <div class="profile-avatar" title="${user.email}">
                 ${initial}
              </div>
-             <div class="profile-dropdown-menu" style="display: none; position: absolute; right: 0; top: 100%; background: var(--bg-card); padding: 10px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); width: 150px; z-index: 1000; border: 1px solid var(--border-color);">
-                <div style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--border-color); overflow: hidden; text-overflow: ellipsis;">
+             <div class="profile-dropdown-menu">
+                <div class="profile-email">
                     ${user.email}
                 </div>
-                <button id="profileLogoutBtn" style="width: 100%; text-align: left; background: none; border: none; color: var(--danger-color); cursor: pointer; padding: 5px;">
+                <button id="profileLogoutBtn" class="profile-logout-btn">
+                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
                     Logout
                 </button>
              </div>
@@ -1234,7 +1242,28 @@ function renderUserProfile(user) {
     if (menu) menu.style.display = 'none';
   });
 
-  document.getElementById('profileLogoutBtn').addEventListener('click', async () => {
-    await supabase.auth.signOut();
-  });
+  document.getElementById('profileLogoutBtn').addEventListener('click', handleLogout);
+}
+
+// ADD THIS: Centralized Logout Handler
+async function handleLogout() {
+  // 1. Immediate UI Cleanup (Optimistic)
+  user_session = null;
+  renderUserProfile(null);
+  updateAuthUI();
+  showToast('Logged out');
+
+  // Hide banner
+  const banner = document.getElementById('welcome-banner');
+  if (banner) banner.classList.add('hidden');
+
+  // Revert prompts
+  renderPrompts();
+
+  // 2. Perform Supabase SignOut
+  // Even if this fails or event doesn't fire, UI is already clean.
+  const { error } = await supabase.auth.signOut();
+  if (error) {
+    console.error('Logout error:', error);
+  }
 }

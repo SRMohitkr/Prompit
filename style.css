@@ -148,6 +148,13 @@ body.dark-mode .search-box input:focus {
     box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
     position: relative;
     user-select: none;
+
+    /* Text Overflow Fix: Responsive Width */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: clamp(100px, 15vw, 160px);
+    vertical-align: middle;
 }
 
 .dropdown-selected::after {
@@ -191,23 +198,118 @@ body.dark-mode .custom-dropdown.open .dropdown-selected {
     position: absolute;
     top: calc(100% + 10px);
     left: 0;
-    width: 100%;
-    background: rgba(255, 255, 255, 0.9);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 255, 255, 0.5);
+    min-width: 100%;
+    width: max-content;
+    /* Allow options to expand beyond button width */
+    max-width: 300px;
+    /* Safety cap */
+    background: rgba(255, 255, 255, 1);
+    /* Solid backround to prevent bleed */
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(0, 0, 0, 0.1);
     border-radius: 16px;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15);
+    /* Stronger shadow */
     padding: 8px;
     display: none;
-    z-index: 100;
+    z-index: 2000;
+    /* High z-index */
     animation: slideDown 0.2s ease-out forwards;
 }
 
 body.dark-mode .dropdown-options {
-    background: rgba(30, 30, 30, 0.98);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+    background: #1e1e1e;
+    /* Solid color */
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+}
+
+/* Profile Dropdown Styles (Migrated from JS) */
+.profile-ui-container {
+    position: relative;
+    margin-left: 15px;
+}
+
+.profile-avatar {
+    width: 38px;
+    height: 38px;
+    background: linear-gradient(135deg, #6c5ce7, #a29bfe);
+    color: white;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    cursor: pointer;
+    user-select: none;
+    transition: transform 0.2s;
+    box-shadow: 0 4px 10px rgba(108, 92, 231, 0.3);
+}
+
+.profile-avatar:hover {
+    transform: scale(1.05);
+}
+
+.profile-dropdown-menu {
+    display: none;
+    position: absolute;
+    right: 0;
+    top: calc(100% + 12px);
+    background: #fff;
+    padding: 8px;
+    border-radius: 12px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+    width: 180px;
+    z-index: 2000;
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    animation: slideDown 0.2s ease-out forwards;
+}
+
+body.dark-mode .profile-dropdown-menu {
+    background: #1e1e1e;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.profile-email {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+    padding: 8px 10px;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+
+    /* Truncation (already partially there, reinforcing) */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: block;
+    /* Ensure it respects width */
+    max-width: 100%;
+    /* Relative to parent (180px - padding) */
+}
+
+body.dark-mode .profile-email {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.profile-logout-btn {
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    color: var(--danger-color);
+    cursor: pointer;
+    padding: 10px;
+    border-radius: 8px;
+    font-weight: 500;
+    transition: background 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.profile-logout-btn:hover {
+    background: rgba(231, 76, 60, 0.1);
 }
 
 .custom-dropdown.open .dropdown-options {
@@ -232,6 +334,10 @@ body.dark-mode .dropdown-options {
     cursor: pointer;
     transition: background 0.2s;
     color: var(--text-color);
+
+    /* Truncate long options - User requested NO wrapping of text, but allowing width to expand */
+    white-space: nowrap;
+    /* overflow/ellipsis removed to allow full text visibility with max-content container */
 }
 
 .dropdown-option:hover {
@@ -1196,4 +1302,102 @@ body.dark-mode .auth-footer {
 .pinned-guide-card {
     border-color: rgba(var(--primary-rgb), 0.4) !important;
     background: linear-gradient(to bottom right, var(--bg-card), rgba(var(--primary-rgb), 0.03));
+}
+
+/* Mobile Responsiveness (Modern App Polish) */
+@media (max-width: 768px) {
+
+    /* 1. Prompt Cards: 2-column grid */
+    .prompt-grid {
+        grid-template-columns: repeat(2, 1fr);
+        /* Force 2 columns */
+        gap: 12px;
+        /* Tighter gap */
+    }
+
+    .prompt-card {
+        padding: 15px;
+        /* Reduce padding inside cards */
+    }
+
+    /* 2. Footer: Clean stack, links first */
+    .app-footer {
+        flex-direction: column-reverse;
+        /* Links on top, text bottom */
+        padding: 20px 15px;
+        text-align: center;
+        gap: 15px;
+        padding-bottom: 80px;
+        /* Accounts for FAB */
+    }
+
+    .footer-links {
+        justify-content: center;
+        width: 100%;
+        gap: 25px;
+    }
+
+    .footer-text {
+        font-size: 0.85rem;
+        opacity: 0.8;
+    }
+
+    /* 3. About Section: Compact & Vertical Rhythm */
+    .about-section {
+        padding: 40px 20px;
+        margin-top: 20px;
+        margin-bottom: 20px;
+    }
+
+    .about-section h2 {
+        font-size: 1.6rem;
+    }
+
+    .features-grid {
+        grid-template-columns: 1fr;
+        /* Stack features vertically */
+        gap: 20px;
+    }
+
+    .feature-item {
+        padding: 20px;
+    }
+
+    /* 4. Controls/Header Polish */
+    header {
+        padding: 15px;
+        gap: 15px;
+    }
+
+    .controls {
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    .search-box {
+        flex-grow: 1;
+        width: auto;
+    }
+
+    #searchInput {
+        width: 100%;
+    }
+
+    /* Dropdowns shouldn't overflow */
+    .custom-dropdown {
+        max-width: 48%;
+        /* prevent crowding */
+    }
+
+    .logo-area h1 {
+        font-size: 1.3rem;
+    }
+}
+
+/* Extra Small Screens (<= 400px) - Safety */
+@media (max-width: 400px) {
+    .prompt-grid {
+        grid-template-columns: 1fr;
+        /* Fallback to 1 col if TOO small */
+    }
 }
