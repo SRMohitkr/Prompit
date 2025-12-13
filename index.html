@@ -7,12 +7,92 @@
     <title>Prompit</title>
     <link rel="stylesheet" href="style.css">
     <meta name="description" content="A beautiful, local-storage based prompt organizer.">
-
 </head>
 
 <body>
 
+    <!-- Auth Overlay -->
+    <div id="authOverlay" class="auth-overlay hidden">
+        <div class="auth-card glass-panel">
+            <div class="auth-header">
+                <div class="auth-icon">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                        <line x1="12" y1="18" x2="12" y2="12"></line>
+                        <line x1="9" y1="15" x2="15" y2="15"></line>
+                    </svg>
+                </div>
+                <h2>Welcome to Prompit</h2>
+                <p>Sign in to sync your prompts across all your devices.</p>
+            </div>
+
+            <!-- Step 1: Email -->
+            <form id="authEmailForm" class="auth-step">
+                <div class="form-group">
+                    <label for="emailInput">Email Address</label>
+                    <input type="email" id="emailInput" placeholder="name@example.com" required>
+                </div>
+                <button type="submit" class="primary-btn full-width" id="sendOtpBtn">
+                    <span class="btn-text">Send Magic Code</span>
+                    <span class="loader hidden"></span>
+                </button>
+            </form>
+
+            <!-- Step 2: OTP -->
+            <form id="authOtpForm" class="auth-step hidden">
+                <div class="form-group">
+                    <label>Enter 6-digit Code</label>
+                    <div class="otp-container" id="otpContainer">
+                        <input type="text" maxlength="1" class="otp-input" pattern="[0-9]*" inputmode="numeric">
+                        <input type="text" maxlength="1" class="otp-input" pattern="[0-9]*" inputmode="numeric">
+                        <input type="text" maxlength="1" class="otp-input" pattern="[0-9]*" inputmode="numeric">
+                        <input type="text" maxlength="1" class="otp-input" pattern="[0-9]*" inputmode="numeric">
+                        <input type="text" maxlength="1" class="otp-input" pattern="[0-9]*" inputmode="numeric">
+                        <input type="text" maxlength="1" class="otp-input" pattern="[0-9]*" inputmode="numeric">
+                    </div>
+                </div>
+                <button type="submit" class="primary-btn full-width" id="verifyOtpBtn">
+                    <span class="btn-text">Verify & Login</span>
+                    <span class="loader hidden"></span>
+                </button>
+                <div class="resend-link">
+                    <a href="#" id="backToEmail">Use a different email</a>
+                </div>
+            </form>
+
+            <!-- ADD THIS: Check Email Message -->
+            <div id="authCheckEmail" class="auth-step hidden">
+                <h3>Check your email</h3>
+                <p>We've sent a magic link to <strong id="sentEmailAddress"></strong>.</p>
+                <p>Click the link in the email to sign in.</p>
+                <button type="button" class="secondary-btn full-width" id="closeAuthBtn">Okay</button>
+            </div>
+
+            <div class="auth-footer">
+                <button id="skipAuthBtn" class="link-btn">💨 Skip for now (Guest Mode)</button>
+            </div>
+        </div>
+    </div>
+
     <div class="app-container">
+        <!-- ADD THIS: Welcome Banner (Task 1) -->
+        <div id="welcome-banner" class="hidden">
+            <div>
+                <h2>Welcome back! 👋</h2>
+                <p>Ready to capture some new prompts?</p>
+            </div>
+            <button class="icon-btn" onclick="document.getElementById('welcome-banner').classList.add('hidden')"
+                style="color:white; opacity:0.8;" aria-label="Dismiss welcome banner">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+            </button>
+        </div>
+
         <!-- Header -->
         <header class="glass-panel">
             <div class="logo-area">
@@ -48,6 +128,9 @@
                     </div>
                 </div>
 
+                <!-- ADD THIS: Auth Profile Slot -->
+                <div id="auth-profile-slot"></div>
+
                 <div class="custom-dropdown" id="settingsDropdown">
                     <button id="settingsBtn" class="icon-btn" title="Settings">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -59,6 +142,11 @@
                         </svg>
                     </button>
                     <div class="dropdown-options" style="right: 0; left: auto; width: 200px;">
+                        <div class="dropdown-option" id="userInfoOption"
+                            style="display:none; border-bottom:1px solid rgba(0,0,0,0.1);">
+                            <span class="icon">👤</span>
+                            <span class="text" id="userEmailDisplay">User</span>
+                        </div>
                         <div class="dropdown-option" id="exportOption">
                             <span class="icon">📥</span>
                             <span class="text">Export JSON</span>
@@ -70,6 +158,14 @@
                         <div class="dropdown-option" id="themeOption">
                             <span class="icon">🌓</span>
                             <span class="text">Switch Theme</span>
+                        </div>
+                        <div class="dropdown-option" id="loginOption" style="color:var(--primary-color);">
+                            <span class="icon">🔐</span>
+                            <span class="text">Login / Signup</span>
+                        </div>
+                        <div class="dropdown-option" id="logoutOption" style="display:none; color:var(--danger-color);">
+                            <span class="icon">🚪</span>
+                            <span class="text">Logout</span>
                         </div>
                     </div>
                 </div>
