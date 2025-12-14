@@ -1401,3 +1401,165 @@ body.dark-mode .auth-footer {
         /* Fallback to 1 col if TOO small */
     }
 }
+
+/* --- Mobile Dropdown Fixes (Task: Fix Overflow) --- */
+@media (max-width: 600px) {
+
+    /* 1. Category Dropdown Safety */
+    .custom-dropdown .dropdown-options {
+        min-width: unset;
+        width: max-content;
+        max-width: 85vw;
+        /* Strict viewport cap */
+        overflow-x: hidden;
+    }
+
+    /* 2. Profile/Settings Dropdown Safety */
+    .profile-dropdown-menu {
+        width: auto;
+        min-width: 200px;
+        max-width: calc(100vw - 40px);
+        right: 0;
+        left: auto;
+    }
+
+    /* 3. Email Truncation */
+    .profile-email {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 100%;
+        display: block;
+    }
+}
+
+/* --- Premium Network Status UI --- */
+
+/* Overlay with blur and smooth fade */
+.network-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Visible State */
+.network-overlay:not(.hidden) {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* Card Design */
+.network-card {
+    background: rgba(255, 255, 255, 0.9);
+    width: 100%;
+    max-width: 420px;
+    padding: 40px 32px;
+    border-radius: 28px;
+    box-shadow:
+        0 20px 40px rgba(0, 0, 0, 0.1),
+        0 0 0 1px rgba(255, 255, 255, 0.5) inset;
+    text-align: center;
+    transform: translateY(20px) scale(0.96);
+    transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+    margin: 16px;
+    /* Safe margin on mobile */
+}
+
+/* Animation Check: When overlay is visible, card animates in */
+.network-overlay:not(.hidden) .network-card {
+    transform: translateY(0) scale(1);
+}
+
+/* Responsive Dark Mode */
+body.dark-mode .network-card {
+    background: rgba(30, 30, 35, 0.95);
+    box-shadow:
+        0 20px 40px rgba(0, 0, 0, 0.3),
+        0 0 0 1px rgba(255, 255, 255, 0.08) inset;
+    color: #fff;
+}
+
+/* Icon */
+.network-icon-container {
+    width: 64px;
+    height: 64px;
+    background: rgba(255, 71, 87, 0.1);
+    color: #ff4757;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 24px auto;
+}
+
+/* Typography */
+.network-card h2 {
+    font-size: 1.5rem;
+    margin-bottom: 12px;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.network-msg {
+    color: var(--text-secondary);
+    line-height: 1.6;
+    margin-bottom: 32px;
+    font-size: 1rem;
+}
+
+/* Buttons */
+.network-actions button {
+    margin-bottom: 12px;
+    height: 48px;
+    font-weight: 600;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.network-actions button:active {
+    transform: scale(0.98);
+}
+
+.safe-action {
+    background: var(--primary-color) !important;
+    color: white;
+    box-shadow: 0 4px 12px rgba(var(--primary-rgb), 0.3);
+}
+
+.retry-action {
+    background: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+}
+
+.small-link {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    text-decoration: none;
+    margin-top: 8px;
+    opacity: 0.8;
+}
+
+.small-link:hover {
+    opacity: 1;
+    text-decoration: underline;
+}
+
+/* Mobile Optimizations */
+@media (max-width: 480px) {
+    .network-card {
+        padding: 32px 24px;
+        width: calc(100% - 32px);
+    }
+}

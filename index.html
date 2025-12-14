@@ -28,6 +28,43 @@
                 <p>Sign in to sync your prompts across all your devices.</p>
             </div>
 
+            <!-- ADD THIS: Network Warning Modal -->
+            <div id="networkWarning" class="network-overlay hidden" role="dialog" aria-modal="true"
+                aria-labelledby="netTitle">
+                <div class="network-card glass-panel-premium">
+                    <div class="network-icon-container">
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M1 1l22 22"></path>
+                            <path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"></path>
+                            <path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"></path>
+                            <path d="M10.71 5.05A16 16 0 0 1 22.58 9"></path>
+                            <path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"></path>
+                            <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
+                            <line x1="12" y1="20" x2="12.01" y2="20"></line>
+                        </svg>
+                    </div>
+                    <h2 id="netTitle">Connection Unstable</h2>
+                    <p class="network-msg">We're having trouble reaching the server. You can safely continue offline or
+                        try to reconnect.</p>
+
+                    <div class="network-actions">
+                        <!-- Primary Safe Action -->
+                        <button id="netStayGuestBtn" class="primary-btn full-width safe-action">
+                            Stay in Guest Mode (Recommended)
+                        </button>
+
+                        <!-- Secondary Actions -->
+                        <button id="netRetryBtn" class="secondary-btn full-width retry-action">
+                            Retry Connection
+                        </button>
+                        <button id="netTryLoginBtn" class="link-btn small-link">
+                            Try Login Anyway
+                        </button>
+                    </div>
+                </div>
+            </div>
+
             <!-- Step 1: Email -->
             <form id="authEmailForm" class="auth-step">
                 <div class="form-group">
@@ -44,20 +81,20 @@
             <!-- Step 2: OTP -->
             <form id="authOtpForm" class="auth-step hidden">
                 <div class="form-group">
-                    <label>Enter 6-digit Code</label>
+                    <label for="otp-1">Enter 6-digit Code</label>
                     <div class="otp-container" id="otpContainer">
-                        <input type="text" maxlength="1" class="otp-input" name="otp[]" autocomplete="one-time-code"
-                            aria-label="Digit 1" pattern="[0-9]*" inputmode="numeric">
-                        <input type="text" maxlength="1" class="otp-input" name="otp[]" autocomplete="one-time-code"
-                            aria-label="Digit 2" pattern="[0-9]*" inputmode="numeric">
-                        <input type="text" maxlength="1" class="otp-input" name="otp[]" autocomplete="one-time-code"
-                            aria-label="Digit 3" pattern="[0-9]*" inputmode="numeric">
-                        <input type="text" maxlength="1" class="otp-input" name="otp[]" autocomplete="one-time-code"
-                            aria-label="Digit 4" pattern="[0-9]*" inputmode="numeric">
-                        <input type="text" maxlength="1" class="otp-input" name="otp[]" autocomplete="one-time-code"
-                            aria-label="Digit 5" pattern="[0-9]*" inputmode="numeric">
-                        <input type="text" maxlength="1" class="otp-input" name="otp[]" autocomplete="one-time-code"
-                            aria-label="Digit 6" pattern="[0-9]*" inputmode="numeric">
+                        <input type="text" maxlength="1" class="otp-input" id="otp-1" name="otp[]"
+                            autocomplete="one-time-code" aria-label="Digit 1" pattern="[0-9]*" inputmode="numeric">
+                        <input type="text" maxlength="1" class="otp-input" id="otp-2" name="otp[]"
+                            autocomplete="one-time-code" aria-label="Digit 2" pattern="[0-9]*" inputmode="numeric">
+                        <input type="text" maxlength="1" class="otp-input" id="otp-3" name="otp[]"
+                            autocomplete="one-time-code" aria-label="Digit 3" pattern="[0-9]*" inputmode="numeric">
+                        <input type="text" maxlength="1" class="otp-input" id="otp-4" name="otp[]"
+                            autocomplete="one-time-code" aria-label="Digit 4" pattern="[0-9]*" inputmode="numeric">
+                        <input type="text" maxlength="1" class="otp-input" id="otp-5" name="otp[]"
+                            autocomplete="one-time-code" aria-label="Digit 5" pattern="[0-9]*" inputmode="numeric">
+                        <input type="text" maxlength="1" class="otp-input" id="otp-6" name="otp[]"
+                            autocomplete="one-time-code" aria-label="Digit 6" pattern="[0-9]*" inputmode="numeric">
                     </div>
                 </div>
                 <button type="submit" class="primary-btn full-width" id="verifyOtpBtn">
@@ -224,7 +261,8 @@
                             <!-- Options populated by JS -->
                         </div>
                     </div>
-                    <input type="hidden" id="category" name="category" value="">
+                    <input type="text" id="category" name="category" value="" tabindex="-1"
+                        style="position:absolute; opacity:0; pointer-events:none; width:0; height:0; margin:0; padding:0; border:0;">
                 </div>
                 <div class="form-group">
                     <label for="body">Prompt</label>
@@ -261,17 +299,17 @@
             novel, debugging complex code, or generating AI art, we keep your inspiration just a click away.</p>
         <div class="features-grid">
             <div class="feature-item">
-                <span class="feature-icon">⚡</span>
+                <span class="feature-icon">✨</span>
                 <h3>Fast Access</h3>
                 <p>Instant search and quick-copy ensure your workflow never breaks.</p>
             </div>
             <div class="feature-item">
-                <span class="feature-icon">🔒</span>
+                <span class="feature-icon">🔐 </span>
                 <h3>Local & Private</h3>
                 <p>Your data stays in your browser. No cloud, no tracking, just you.</p>
             </div>
             <div class="feature-item">
-                <span class="feature-icon">🎨</span>
+                <span class="feature-icon">🧿</span>
                 <h3>Beautiful Design</h3>
                 <p>A clean, glassmorphic interface that inspires you to create.</p>
             </div>

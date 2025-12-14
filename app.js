@@ -144,12 +144,21 @@ let currentFilter = 'all';
   setupEventListeners();
   setupAuthListeners();
   renderCategories();
-
-  // ADD THIS: Auth State Observer
+  renderPrompts(); // Optimistic Render: Show cached data IMMEDIATELY before waiting for Auth/Supabase
   if (supabase) {
     supabase.auth.onAuthStateChange(async (event, session) => {
       // Handle both explicit SIGNED_IN and page load INITIAL_SESSION
       if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && session) {
+
+        // --- ADDED FIX: Check Intent ---
+        const intent = localStorage.getItem('user_intent_login');
+        if (!intent) {
+          console.log('No login intent found. Forcing guest mode.');
+          await supabase.auth.signOut();
+          return;
+        }
+        // -------------------------------
+
         user_session = session;
         hideAuthOverlay();
         renderUserProfile(session.user);
@@ -180,6 +189,9 @@ let currentFilter = 'all';
           showToast('Logged out');
           const banner = document.getElementById('welcome-banner');
           if (banner) banner.classList.add('hidden');
+
+          // Clear intent
+          localStorage.removeItem('user_intent_login');
         }
       }
     });
@@ -201,13 +213,10 @@ let currentFilter = 'all';
   if (supabase) {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) {
-      // If no session, show overlay (Guest mode prompting)
-      // Check if we previously skipped? 
-      // For now, just show it as per original logic
       showAuthOverlay();
-      // Also render empty/public prompts
-      renderPrompts();
     }
+    // ALWAYS render cached prompts initially to prevent empty state
+    renderPrompts();
     // If session exists, onAuthStateChange will handle it (INITIAL_SESSION)
   } else {
     // No Supabase, just render local
@@ -893,23 +902,33 @@ function renderPrompts(filterText = '', categoryFilter = 'all') {
     pinnedCard.className = 'prompt-card pinned-guide-card';
     pinnedCard.innerHTML = `
         <div class="card-header">
-            <div class="card-title">👋 Start Here: Guide</div>
-            <div class="card-actions">
-                <button class="icon-btn" title="Pinned">📌</button>
-            </div>
-        </div>
-        <div class="category-badge" style="background:rgba(255,255,255,0.2);">Getting Started</div>
-        <div class="card-body">
-            Welcome to your new prompt library! <br><br>
-            • <strong>Save</strong> prompts from anywhere.<br>
-            • <strong>Organize</strong> with tags & categories.<br>
-            • <strong>Copy</strong> with one click.<br>
-        </div>
-        <div class="card-footer">
-            <div class="tags">
-                <span class="tag">#guide</span>
-            </div>
-        </div>
+    <div class="card-title">👋 Welcome to Prompit</div>
+    <div class="card-actions">
+        <button class="icon-btn" title="Pinned">📌</button>
+    </div>
+</div>
+
+<div class="category-badge" style="background:rgba(255,255,255,0.2);">
+    Getting Started
+</div>
+
+<div class="card-body">
+This is your personal prompt library — built to help you think, create, and move faster. 🚀
+    <br><br>
+    • <strong>Save</strong> your best ChatGPT prompts in seconds.<br>
+    • <strong>Organize</strong> them using tags & categories.<br>
+    • <strong>Reuse</strong> and <strong>copy</strong> prompts with one click.<br>
+    <br>
+    Start by adding your first prompt above 👆
+</div>
+
+<div class="card-footer">
+    <div class="tags">
+        <span class="tag">#welcome</span>
+        <span class="tag">#guide</span>
+    </div>
+</div>
+
       `;
     grid.appendChild(pinnedCard);
   }
@@ -1267,3 +1286,94 @@ async function handleLogout() {
     console.error('Logout error:', error);
   }
 }
+
+/* ADD THIS: Network Status Manager */
+const NetworkManager = {
+  overlay: document.getElementById('networkWarning'),
+  stayGuestBtn: document.getElementById('netStayGuestBtn'),
+  retryBtn: document.getElementById('netRetryBtn'),
+  tryLoginBtn: document.getElementById('netTryLoginBtn'),
+
+  init() {
+    if (!this.overlay) return;
+
+    // Listeners
+    this.stayGuestBtn.addEventListener('click', () => this.stayGuest());
+    this.retryBtn.addEventListener('click', () => this.checkConnection(true));
+    this.tryLoginBtn.addEventListener('click', () => this.tryLogin());
+
+    window.addEventListener('online', () => this.checkConnection(false));
+    window.addEventListener('offline', () => this.show());
+
+    // Initial Check
+    if (!navigator.onLine ||
+      (navigator.connection && ['slow-2g', '2g'].includes(navigator.connection.effectiveType))) {
+      this.checkConnection(false);
+    }
+  },
+
+  async checkConnection(manualRetry = false) {
+    if (!manualRetry && localStorage.getItem('prompit_stay_guest') === '1') return;
+
+    if (manualRetry) {
+      const originalText = this.retryBtn.textContent;
+      this.retryBtn.textContent = 'Checking...';
+      this.retryBtn.disabled = true;
+      this.retryBtn.style.opacity = '0.7';
+      await new Promise(r => setTimeout(r, 600)); // Min UI delay for feel
+    }
+
+    const isReachable = await this.pingSupabase();
+
+    if (manualRetry) {
+      this.retryBtn.textContent = 'Retry Connection';
+      this.retryBtn.disabled = false;
+      this.retryBtn.style.opacity = '1';
+    }
+
+    if (isReachable) {
+      this.hide();
+      if (manualRetry) showToast('Connection Restored!');
+    } else {
+      this.show();
+    }
+  },
+
+  async pingSupabase() {
+    if (!navigator.onLine) return false;
+    if (!supabase) return true;
+
+    try {
+      const timeout = new Promise((_, reject) => setTimeout(() => reject('timeout'), 4000));
+      await Promise.race([
+        supabase.from('prompt_saves').select('id').limit(1).maybeSingle(),
+        timeout
+      ]);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  },
+
+  show() {
+    if (localStorage.getItem('prompit_stay_guest') === '1') return;
+    this.overlay.classList.remove('hidden');
+  },
+
+  hide() {
+    this.overlay.classList.add('hidden');
+  },
+
+  stayGuest() {
+    localStorage.setItem('prompit_stay_guest', '1');
+    this.hide();
+    showToast('Offline Mode Active');
+  },
+
+  tryLogin() {
+    this.hide();
+    showAuthOverlay();
+  }
+};
+
+document.addEventListener('DOMContentLoaded', () => NetworkManager.init());
