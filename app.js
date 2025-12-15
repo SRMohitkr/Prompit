@@ -150,12 +150,15 @@ let currentFilter = 'all';
       // Handle both explicit SIGNED_IN and page load INITIAL_SESSION
       if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && session) {
 
-        // --- ADDED FIX: Check Intent ---
+        // --- FIX: Trust the session ---
+        // We do NOT sign out if intent is missing. 
+        // We only check it to clean it up or for metrics if needed.
         const intent = localStorage.getItem('user_intent_login');
-        if (!intent) {
-          console.log('No login intent found. Forcing guest mode.');
-          await supabase.auth.signOut();
-          return;
+        if (intent) {
+          console.log('Completing login flow...');
+          localStorage.removeItem('user_intent_login'); // Cleanup
+        } else {
+          console.log('Session restored (Background/Guest to User).');
         }
         // -------------------------------
 
@@ -240,6 +243,10 @@ function setupAuthListeners() {
     if (!email) return;
 
     setLoading(sendOtpBtn, true);
+
+    // Set explicit intent before starting auth flow
+    localStorage.setItem('user_intent_login', 'true');
+
     // Note: To receive a 6-digit code, ensure 'Enable Email Provider' is ON in Supabase
     // and your email template includes {{ .Token }}
     const { error } = await supabase.auth.signInWithOtp({
