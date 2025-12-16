@@ -24,6 +24,8 @@ create table if not exists public.prompt_saves (
   tags text,
   category text,
   favorite boolean default false,
+  total_usage integer default 0,
+  last_used_at timestamp with time zone,
   created_at timestamp with time zone default now()
 );
 
@@ -33,6 +35,15 @@ begin
   -- Rename prompt_text to body if it exists and body prevents clean setup
   if exists (select 1 from information_schema.columns where table_name = 'prompt_saves' and column_name = 'prompt_text') then
      alter table public.prompt_saves rename column prompt_text to body;
+  end if;
+  
+  -- Add usage tracking columns if they don't exist
+  if not exists (select 1 from information_schema.columns where table_name = 'prompt_saves' and column_name = 'total_usage') then
+     alter table public.prompt_saves add column total_usage integer default 0;
+  end if;
+  
+  if not exists (select 1 from information_schema.columns where table_name = 'prompt_saves' and column_name = 'last_used_at') then
+     alter table public.prompt_saves add column last_used_at timestamp with time zone;
   end if;
 end $$;
 
@@ -940,41 +951,112 @@ This is your personal prompt library — built to help you think, create, and mo
     grid.appendChild(pinnedCard);
   }
 
-  const filtered = prompts.filter(p => {
-    const matchText = (p.title + p.body + (p.tags || []).join(' ')).toLowerCase().includes(filterText.toLowerCase());
-    const matchCat = categoryFilter === 'all' || p.category === categoryFilter;
-    return matchText && matchCat;
+
+  // --- Tier-1 Full-Text Search with Ranking & Highlighting ---
+  const query = (filterText || '').trim().toLowerCase();
+  let results = prompts
+    .map(p => {
+      // Prepare fields
+      const title = p.title || '';
+      const body = p.body || '';
+      const tags = Array.isArray(p.tags) ? p.tags : (typeof p.tags === 'string' ? p.tags.split(',').map(t => t.trim()) : []);
+      // Find matches
+      let matchType = null, matchIdx = -1, matchLen = 0, snippet = '', matchField = '', matchValue = '';
+      if (query && title.toLowerCase().includes(query)) {
+        matchType = 'title';
+        matchField = 'title';
+        matchValue = title;
+        matchIdx = title.toLowerCase().indexOf(query);
+        matchLen = query.length;
+      } else if (query && tags.some(tag => tag.toLowerCase().includes(query))) {
+        matchType = 'tag';
+        matchField = 'tags';
+        matchValue = tags.find(tag => tag.toLowerCase().includes(query)) || '';
+        matchIdx = matchValue.toLowerCase().indexOf(query);
+        matchLen = query.length;
+      } else if (query && body.toLowerCase().includes(query)) {
+        matchType = 'body';
+        matchField = 'body';
+        matchValue = body;
+        matchIdx = body.toLowerCase().indexOf(query);
+        matchLen = query.length;
+      }
+      // Only include if matches query and category
+      const matchCat = categoryFilter === 'all' || p.category === categoryFilter;
+      if ((query && matchType && matchCat) || (!query && matchCat)) {
+        // Build snippet (for body, show context; for title/tag, show whole)
+        if (matchType === 'body' && matchIdx !== -1) {
+          const start = Math.max(0, matchIdx - 30);
+          const end = Math.min(body.length, matchIdx + matchLen + 30);
+          snippet = (start > 0 ? '…' : '') + body.substring(start, end) + (end < body.length ? '…' : '');
+        } else if (matchType === 'title') {
+          snippet = title;
+        } else if (matchType === 'tag') {
+          snippet = matchValue;
+        } else {
+          snippet = body.substring(0, 150) + (body.length > 150 ? '…' : '');
+        }
+        return { prompt: p, matchType, matchField, matchIdx, matchLen, snippet, matchValue };
+      }
+      return null;
+    })
+    .filter(Boolean);
+
+  // Ranking: title > tag > body
+  results.sort((a, b) => {
+    // Priority 1: Favorite prompts come first
+    if (a.prompt.favorite && !b.prompt.favorite) return -1;
+    if (!a.prompt.favorite && b.prompt.favorite) return 1;
+    
+    // Priority 2: Search ranking (title > tag > body)
+    const rank = { title: 0, tag: 1, body: 2 };
+    if (rank[a.matchType] !== rank[b.matchType]) return rank[a.matchType] - rank[b.matchType];
+    
+    // Priority 3: Newer first
+    return (b.prompt.created_at || 0) > (a.prompt.created_at || 0) ? 1 : -1;
   });
 
-  if (filtered.length === 0) {
-    // Show Empty State (Welcome Card if truly empty and not just filtered)
-    if (!filterText && prompts.length === 0) {
-      // This is the "Empty State" welcome card for new users (from previous task)
-      // We can keep it or let the Pinned Card above serve the purpose.
-      // If we have the pinned card, maybe we don't need this?
-      // But the pinned card is mostly for "Logged In" state. 
-      // Let's keep the empty state message simple if the Pinned Card is already there.
-      if (!user_session) {
-        grid.innerHTML += `
-                <div style="grid-column: 1/-1; text-align: center; color: var(--text-secondary); padding: 40px;">
-                    <p style="font-size: 1.2rem;">No prompts found.</p>
-                    <p>Create one to get started!</p>
-                </div>
-             `;
-      }
-    } else {
-      grid.innerHTML += `
-            <div style="grid-column: 1/-1; text-align: center; color: var(--text-secondary); padding: 40px;">
-                <p>No prompts found matching filter.</p>
-            </div>
-         `;
-    }
-    // Don't return if we added the pinned card! 
-    if (!user_session && !filterText && prompts.length === 0) return;
-    if (filtered.length === 0 && !document.querySelector('.pinned-guide-card')) return;
+  // If no query, show all prompts (with favorites pinned at top)
+  if (!query) {
+    results = prompts
+      .filter(p => categoryFilter === 'all' || p.category === categoryFilter)
+      .map(p => ({ prompt: p, matchType: null, snippet: p.body.substring(0, 150) + (p.body.length > 150 ? '…' : '') }))
+      .sort((a, b) => {
+        // Favorites always appear first, then by creation date
+        if (a.prompt.favorite && !b.prompt.favorite) return -1;
+        if (!a.prompt.favorite && b.prompt.favorite) return 1;
+        return (b.prompt.created_at || 0) > (a.prompt.created_at || 0) ? 1 : -1;
+      });
   }
 
-  filtered.forEach((p, index) => {
+
+  if (results.length === 0) {
+    // Gentle empty state, only if no prompts at all
+    if (!query && prompts.length === 0) {
+      if (!user_session) {
+        grid.innerHTML += `
+          <div style="grid-column: 1/-1; text-align: center; color: var(--text-secondary); padding: 40px;">
+            <p style="font-size: 1.2rem;">No prompts found.</p>
+            <p>Create one to get started!</p>
+          </div>
+        `;
+      }
+    }
+    // If searching, do NOT show aggressive "No results" message
+    return;
+  }
+
+  // Sort results: Favorites first (by true/false), then by date
+  results.sort((a, b) => {
+    // Favorites always come first
+    if (a.prompt.favorite && !b.prompt.favorite) return -1;
+    if (!a.prompt.favorite && b.prompt.favorite) return 1;
+    // Then sort by creation date (newer first)
+    return (b.prompt.created_at || 0) > (a.prompt.created_at || 0) ? 1 : -1;
+  });
+
+  results.forEach((res, index) => {
+    const p = res.prompt;
     const card = document.createElement('div');
     card.className = 'prompt-card';
     card.dataset.id = p.id;
@@ -982,19 +1064,46 @@ This is your personal prompt library — built to help you think, create, and mo
 
     // Copy Button SVG
     const copyIcon = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
-
     // Fav Icon SVG
     const favIcon = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>`;
-
     // Delete Icon
     const trashIcon = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>`;
-
     // Edit Icon
     const editIcon = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>`;
 
+    // --- Highlighting ---
+    function highlight(text, q) {
+      if (!q || !text) return escapeHtml(text);
+      // Escape regex special chars in q
+      const safeQ = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp(safeQ, 'gi');
+      return escapeHtml(text).replace(re, m => `<mark>${escapeHtml(m)}</mark>`);
+    }
+
+    // Highlight in snippet
+    let snippetHtml = res.snippet;
+    if (res.matchType && query) {
+      snippetHtml = highlight(res.snippet, query);
+    } else {
+      snippetHtml = escapeHtml(res.snippet);
+    }
+
+    // Highlight in title/tags if match
+    let titleHtml = escapeHtml(p.title);
+    if (res.matchType === 'title' && query) titleHtml = highlight(p.title, query);
+
+    let tagsHtml = (Array.isArray(p.tags) ? p.tags : (typeof p.tags === 'string' ? p.tags.split(',').map(t => t.trim()) : [])).map(t => {
+      if (res.matchType === 'tag' && t.toLowerCase().includes(query)) return `<span class="tag"><mark>#${escapeHtml(t)}</mark></span>`;
+      return `<span class="tag">#${escapeHtml(t)}</span>`;
+    }).join('');
+
+    // Usage count (initialize to 0 if not set)
+    const usageCount = typeof p.total_usage === 'number' ? p.total_usage : 0;
+    const usageText = usageCount > 0 ? `Used ${usageCount} ${usageCount === 1 ? 'time' : 'times'}` : '';
+
     card.innerHTML = `
       <div class="card-header">
-        <div class="card-title">${escapeHtml(p.title)}</div>
+        <div class="card-title">${titleHtml}</div>
         <div class="card-actions">
            <button class="icon-btn fav-btn ${p.favorite ? 'active' : ''}" onclick="toggleFavorite('${p.id}')" title="Favorite">${favIcon}</button>
            <button class="icon-btn" onclick="copyPrompt('${p.id}')" title="Copy">${copyIcon}</button>
@@ -1002,12 +1111,13 @@ This is your personal prompt library — built to help you think, create, and mo
            <button class="icon-btn" onclick="deletePrompt('${p.id}')" title="Delete" style="color:var(--danger-color);">${trashIcon}</button>
         </div>
       </div>
-      <div class="category-badge" style="margin-bottom:8px;">${p.category || 'other'}</div>
-      <div class="card-body">${escapeHtml(p.body).substring(0, 150)}${p.body.length > 150 ? '...' : ''}</div>
+      <div class="category-badge" style="margin-bottom:8px;">${escapeHtml(p.category) || 'other'}</div>
+      <div class="card-body">${snippetHtml}</div>
       <div class="card-footer">
          <div class="tags">
-            ${(p.tags || []).map(t => `<span class="tag">#${escapeHtml(t)}</span>`).join('')}
+            ${tagsHtml}
          </div>
+         ${usageText ? `<div class="usage-text">${usageText}</div>` : ''}
       </div>
     `;
     grid.appendChild(card);
@@ -1059,11 +1169,95 @@ function escapeHtml(text) {
     .replace(/'/g, "&#039;");
 }
 
+// Track recent copies to prevent accidental double-counting within 2 seconds
+const recentCopies = new Map();
+
 function copyPrompt(id) {
   const p = prompts.find(x => x.id === id);
-  if (p) {
-    navigator.clipboard.writeText(p.body);
-    showToast('Copied to clipboard!');
+  if (!p) return;
+
+  // Copy to clipboard instantly
+  navigator.clipboard.writeText(p.body);
+  showToast('Copied to clipboard!');
+
+  // Visual feedback: Change copy button to checkmark briefly
+  // Find the copy button in the card and update its state
+  const card = document.querySelector(`[data-id="${id}"]`);
+  if (card) {
+    const copyBtn = card.querySelector('.card-actions button:nth-child(2)');
+    if (copyBtn) {
+      // Checkmark icon
+      const checkIcon = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+      const originalHTML = copyBtn.innerHTML;
+      copyBtn.innerHTML = checkIcon;
+      copyBtn.classList.add('copied-state');
+
+      // Revert after 1.5 seconds
+      setTimeout(() => {
+        copyBtn.innerHTML = originalHTML;
+        copyBtn.classList.remove('copied-state');
+      }, 1500);
+    }
+  }
+
+  // Safeguard: Prevent incrementing usage twice within 2 seconds
+  const now = Date.now();
+  const lastCopyTime = recentCopies.get(id) || 0;
+  if (now - lastCopyTime < 2000) {
+    return; // Already counted recently, skip increment
+  }
+
+  // Mark this copy time
+  recentCopies.set(id, now);
+
+  // Initialize usage fields if they don't exist
+  if (typeof p.total_usage !== 'number') {
+    p.total_usage = 0;
+  }
+
+  // Increment usage count
+  p.total_usage += 1;
+  p.last_used_at = new Date().toISOString();
+
+  // Save locally
+  saveToLocalStorage();
+  renderPrompts(); // Re-render to show updated usage count
+
+  // Sync to cloud if user is logged in or has cloud_id
+  if (p.cloud_id && supabase) {
+    syncUsageToCloud(p);
+  } else {
+    savePromptToSupabase(p);
+  }
+}
+
+async function syncUsageToCloud(prompt) {
+  if (!supabase) return;
+
+  try {
+    let query = supabase
+      .from('prompt_saves')
+      .update({
+        total_usage: prompt.total_usage,
+        last_used_at: prompt.last_used_at
+      })
+      .eq('id', prompt.cloud_id);
+
+    // RLS: Add correct filter
+    if (user_session) {
+      query = query.eq('user_id', user_session.user.id);
+    } else {
+      query = query.eq('device_id', device_id);
+    }
+
+    const { error } = await query;
+    if (error) {
+      console.error("Cloud usage update failed:", error);
+      queueOffline(prompt);
+    }
+  } catch (err) {
+    console.error('Usage sync exception:', err);
+    queueOffline(prompt);
   }
 }
 

@@ -1,3 +1,11 @@
+/* Highlighted search match style */
+mark {
+    background: rgb(153, 195, 255);
+    color: inherit;
+    padding: 0 2px;
+    border-radius: 3px;
+    font-weight: 600;
+}
 :root {
     --bg-gradient: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
     --glass-bg: rgba(255, 255, 255, 0.65);
@@ -394,7 +402,7 @@ body.dark-mode #modalCategoryDropdown .dropdown-options {
     cursor: pointer;
     padding: 8px;
     border-radius: 50%;
-    transition: background var(--transition-speed);
+    transition: background var(--transition-speed), color var(--transition-speed);
     color: var(--text-color);
 }
 
@@ -406,6 +414,11 @@ body.dark-mode #modalCategoryDropdown .dropdown-options {
 body.dark-mode .icon-btn:hover {
     background: rgba(107, 163, 255, 0.15);
     color: var(--primary-color);
+}
+
+/* Copy button feedback state - shows checkmark briefly */
+.icon-btn.copied-state {
+    color: var(--success-color);
 }
 
 /* Paste Area */
@@ -537,6 +550,8 @@ body.dark-mode .card-body {
     justify-content: space-between;
     align-items: center;
     font-size: 0.85rem;
+    flex-wrap: wrap;
+    gap: 12px;
 }
 
 .tags {
@@ -555,6 +570,17 @@ body.dark-mode .card-body {
 body.dark-mode .tag {
     background: rgba(107, 163, 255, 0.15);
     color: var(--primary-color);
+}
+
+/* Subtle usage text - confidence signal without gamification */
+.usage-text {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    opacity: 0.7;
+    font-weight: 500;
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+    margin-left: auto;
 }
 
 .category-badge {
