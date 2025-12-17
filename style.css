@@ -6,6 +6,7 @@ mark {
     border-radius: 3px;
     font-weight: 600;
 }
+
 :root {
     --bg-gradient: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
     --glass-bg: rgba(255, 255, 255, 0.65);
@@ -17,6 +18,12 @@ mark {
     --danger-color: #e74c3c;
     --success-color: #2ecc71;
     --border-radius: 16px;
+    --border-radius-sm: 12px;
+    --shadow-sm: 0 4px 15px rgba(0, 0, 0, 0.05);
+    --shadow-md: 0 8px 30px rgba(0, 0, 0, 0.08);
+    /* Lifted */
+    --shadow-lg: 0 12px 30px rgba(0, 0, 0, 0.12);
+    /* Hover/Deep */
     --transition-speed: 0.3s;
 }
 
@@ -134,7 +141,8 @@ body.dark-mode .search-box input:focus {
 
 .search-box input:focus {
     background: #fff;
-    box-shadow: 0 0 0 2px var(--primary-color);
+    box-shadow: 0 0 0 4px rgba(74, 144, 226, 0.15);
+    /* Keep specific focus ring, it's functional */
 }
 
 /* Custom Dropdown */
@@ -200,6 +208,18 @@ body.dark-mode .custom-dropdown.open .dropdown-selected {
     background-color: rgba(70, 70, 70, 0.95);
     border-color: var(--primary-color);
     box-shadow: 0 6px 20px rgba(107, 163, 255, 0.3);
+}
+
+/* Active Filter State */
+.dropdown-selected.active-filter {
+    background-color: rgba(74, 144, 226, 0.1);
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+    font-weight: 700;
+}
+
+body.dark-mode .dropdown-selected.active-filter {
+    background-color: rgba(107, 163, 255, 0.15);
 }
 
 .dropdown-options {
@@ -423,28 +443,52 @@ body.dark-mode .icon-btn:hover {
 
 /* Paste Area */
 .paste-area {
-    padding: 20px;
+    padding: 24px;
     margin-bottom: 30px;
     display: flex;
     gap: 15px;
     align-items: flex-start;
+    /* Changed from center to align with taller input */
+    position: relative;
+    /* Soft shadow to lift the whole area */
+    box-shadow: var(--shadow-md);
+    border: 1px solid rgba(255, 255, 255, 0.6);
 }
 
 .paste-area textarea {
     flex-grow: 1;
-    border: 1px solid rgba(0, 0, 0, 0.1);
-    border-radius: 10px;
-    padding: 10px;
-    background: rgba(255, 255, 255, 0.5);
+    border: 2px solid transparent;
+    /* Prepare for focus state */
+    border-radius: 12px;
+    padding: 16px;
+    background: rgba(255, 255, 255, 0.85);
     resize: vertical;
-    min-height: 60px;
+    min-height: 85px;
+    /* Increased height */
     font-family: inherit;
+    font-size: 1.05rem;
+    /* slightly clearer text */
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.02);
 }
 
+.paste-area textarea:focus {
+    background: #fff;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 4px rgba(74, 144, 226, 0.15);
+}
+
+
 body.dark-mode .paste-area textarea {
-    background: rgba(40, 40, 40, 0.8);
-    border: 1px solid rgba(255, 255, 255, 0.15);
+    background: rgba(40, 40, 40, 0.6);
+    border: 2px solid rgba(255, 255, 255, 0.1);
     color: var(--text-color);
+}
+
+body.dark-mode .paste-area textarea:focus {
+    background: rgba(40, 40, 40, 0.9);
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 4px rgba(107, 163, 255, 0.15);
 }
 
 .paste-area button {
@@ -474,9 +518,10 @@ body.dark-mode .paste-area textarea {
 .prompt-card {
     background: rgba(255, 255, 255, 0.75);
     border-radius: var(--border-radius);
-    padding: 20px;
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
-    transition: all var(--transition-speed);
+    padding: 24px;
+    /* Increased padding */
+    box-shadow: var(--shadow-sm);
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
     position: relative;
     display: flex;
     flex-direction: column;
@@ -498,9 +543,11 @@ body.dark-mode .prompt-card {
 }
 
 .prompt-card:hover {
-    transform: translateY(-5px);
-    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
-    background: rgba(255, 255, 255, 0.9);
+    transform: translateY(-4px);
+    /* Subtle lift */
+    box-shadow: var(--shadow-lg);
+    /* Softer, deeper shadow */
+    background: rgba(255, 255, 255, 1);
 }
 
 body.dark-mode .prompt-card:hover {
@@ -512,13 +559,35 @@ body.dark-mode .prompt-card:hover {
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
-    margin-bottom: 10px;
+    margin-bottom: 16px;
+    /* More space between header and body */
+}
+
+/* Recency Badge */
+.badge-new {
+    display: inline-block;
+    background-color: rgba(46, 204, 113, 0.15);
+    color: var(--success-color);
+    font-size: 0.7rem;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 6px;
+    margin-left: 8px;
+    vertical-align: middle;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+}
+
+body.dark-mode .badge-new {
+    background-color: rgba(46, 204, 113, 0.2);
 }
 
 .card-title {
-    font-weight: 700;
-    font-size: 1.1rem;
+    font-weight: 800;
+    /* Bolder */
+    font-size: 1.15rem;
     color: var(--text-color);
+    letter-spacing: -0.01em;
 }
 
 .card-actions {
@@ -531,9 +600,12 @@ body.dark-mode .prompt-card:hover {
     padding: 10px;
     border-radius: 8px;
     font-family: monospace;
-    font-size: 0.9rem;
+    font-size: 0.95rem;
+    /* Slightly clearer code text */
     color: #444;
-    margin-bottom: 15px;
+    opacity: 0.9;
+    /* Slight de-emphasis for hierarchy */
+    margin-bottom: 20px;
     white-space: pre-wrap;
     max-height: 150px;
     overflow-y: auto;
@@ -1065,6 +1137,128 @@ body.dark-mode .app-footer {
 }
 
 /* =========================================
+   Smart Tags UI
+   ========================================= */
+.tag-input-wrapper {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 12px;
+    background: rgba(255, 255, 255, 0.5);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    border-radius: var(--border-radius-sm);
+    min-height: 46px;
+    align-items: center;
+    position: relative;
+    transition: all 0.2s ease;
+}
+
+body.dark-mode .tag-input-wrapper {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.tag-input-wrapper:focus-within {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.15);
+    background: #fff;
+}
+
+body.dark-mode .tag-input-wrapper:focus-within {
+    background: rgba(30, 30, 30, 0.9);
+}
+
+.tag-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.tag-chip {
+    display: flex;
+    align-items: center;
+    background: rgba(74, 144, 226, 0.15);
+    color: var(--primary-color);
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    animation: fadeIn 0.2s ease-out;
+}
+
+body.dark-mode .tag-chip {
+    background: rgba(74, 144, 226, 0.25);
+    color: #8ab4f8;
+}
+
+.tag-chip-remove {
+    margin-left: 6px;
+    cursor: pointer;
+    font-size: 1.1rem;
+    line-height: 1;
+    opacity: 0.6;
+    transition: opacity 0.2s;
+}
+
+.tag-chip-remove:hover {
+    opacity: 1;
+}
+
+#tagInput {
+    border: none;
+    outline: none;
+    background: transparent;
+    font-size: 0.95rem;
+    color: var(--text-color);
+    flex: 1;
+    min-width: 80px;
+    padding: 4px 0;
+}
+
+/* Tag Suggestions */
+.tag-suggestions {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    width: 100%;
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    border-radius: var(--border-radius-sm);
+    margin-top: 4px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+    z-index: 100;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+body.dark-mode .tag-suggestions {
+    background: rgba(30, 30, 30, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.tag-suggestion-item {
+    padding: 10px 14px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    color: var(--text-color);
+    transition: background 0.15s ease;
+}
+
+.tag-suggestion-item:hover,
+.tag-suggestion-item.selected {
+    background: rgba(74, 144, 226, 0.1);
+    color: var(--primary-color);
+}
+
+body.dark-mode .tag-suggestion-item:hover,
+body.dark-mode .tag-suggestion-item.selected {
+    background: rgba(74, 144, 226, 0.2);
+}
+
+/* =========================================
    AUTH UI
    ========================================= */
 
@@ -1261,36 +1455,46 @@ body.dark-mode .auth-footer {
 
 /* Welcome Banner Style */
 #welcome-banner {
-    background: linear-gradient(to right, #6a11cb 0%, #2575fc 100%);
+    background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
     color: white;
-    padding: 20px;
-    border-radius: 16px;
-    margin-bottom: 30px;
-    box-shadow: 0 10px 20px rgba(37, 117, 252, 0.2);
+    padding: 32px 28px;
+    /* Increased height/spaciousness */
+    border-radius: var(--border-radius);
+    /* Consistent 16px */
+    /* Slightly rounder for premium feel */
+    margin-bottom: 32px;
+    box-shadow: var(--shadow-md);
+    /* Consistent lift */
     display: flex;
     align-items: center;
     justify-content: space-between;
-    animation: fadeSlideUp 0.6s ease-out;
+    animation: fadeSlideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+    /* Smoother bezier */
 }
 
 #welcome-banner h2 {
     margin: 0;
-    font-size: 1.5rem;
+    font-size: 1.8rem;
+    /* Larger for hierarchy */
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
 }
 
 #welcome-banner div:first-child {
     flex: 1;
     min-width: 0;
-    /* Allow text truncate/wrap */
-    padding-right: 15px;
-    /* Spacing from button */
+    padding-right: 20px;
 }
 
 #welcome-banner p {
-    margin: 5px 0 0;
-    opacity: 0.9;
-    line-height: 1.4;
-    /* Better readability on wrap */
+    margin: 8px 0 0;
+    /* More breathing room */
+    opacity: 0.95;
+    font-size: 1.05rem;
+    /* Readable premium size */
+    font-weight: 500;
+    line-height: 1.5;
 }
 
 /* Responsive Fixes (Mobile) */
@@ -1588,4 +1792,116 @@ body.dark-mode .network-card {
         padding: 32px 24px;
         width: calc(100% - 32px);
     }
+}
+
+/* Folder Stream System */
+.folder-stream-container {
+    margin-top: 10px;
+    /* Safer spacing */
+    margin-bottom: 25px;
+    padding: 0 20px 10px 20px;
+    /* space for shadow */
+    overflow-x: auto;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+    mask-image: linear-gradient(to right, black 95%, transparent 100%);
+    display: flex;
+    align-items: center;
+    position: relative;
+    z-index: 60;
+    /* Above Header */
+}
+
+.folder-stream-container::-webkit-scrollbar {
+    display: none;
+}
+
+.folder-stream {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+
+.folder-pill {
+    padding: 8px 18px;
+    border-radius: 24px;
+    border: 1px solid var(--glass-border);
+    background: rgba(255, 255, 255, 0.5);
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.25, 1, 0.5, 1);
+    user-select: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.02);
+}
+
+.folder-pill:hover {
+    background: rgba(255, 255, 255, 0.9);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.folder-pill.active {
+    background: var(--primary-color);
+    color: white;
+    border-color: var(--primary-color);
+    box-shadow: 0 8px 20px rgba(74, 144, 226, 0.3);
+}
+
+body.dark-mode .folder-pill {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-secondary);
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+body.dark-mode .folder-pill:hover {
+    background: rgba(255, 255, 255, 0.15);
+    color: var(--text-color);
+}
+
+body.dark-mode .folder-pill.active {
+    background: var(--primary-color);
+    color: white;
+    box-shadow: 0 8px 20px rgba(107, 163, 255, 0.3);
+}
+
+/* Add Folder Button */
+.folder-add-pill {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.2rem;
+    color: var(--text-secondary);
+    background: rgba(255, 255, 255, 0.4);
+    border: 1px dashed rgba(0, 0, 0, 0.1);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.folder-add-pill:hover {
+    background: white;
+    color: var(--primary-color);
+    border-color: var(--primary-color);
+}
+
+/* Inline Input */
+.folder-rename-input {
+    border: none;
+    background: transparent;
+    color: inherit;
+    font-family: inherit;
+    font-size: inherit;
+    font-weight: 500;
+    outline: none;
+    min-width: 60px;
+    max-width: 120px;
+    text-align: center;
 }

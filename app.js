@@ -82,6 +82,38 @@ create policy "Devices can manage metadata" on device_metadata
     device_id = current_setting('request.header.device-id', true)
   );
 
+
+-- 6. Folder System Support
+create table if not exists public.folders (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users(id) not null,
+  name text not null,
+  created_at timestamp with time zone default now()
+);
+
+-- RLS for Folders
+alter table public.folders enable row level security;
+
+create policy "Users can view own folders" on folders
+  for select using (auth.uid() = user_id);
+
+create policy "Users can create own folders" on folders
+  for insert with check (auth.uid() = user_id);
+
+create policy "Users can update own folders" on folders
+  for update using (auth.uid() = user_id);
+
+create policy "Users can delete own folders" on folders
+  for delete using (auth.uid() = user_id);
+
+-- Add folder_id to prompt_saves
+do $$
+begin
+  if not exists (select 1 from information_schema.columns where table_name = 'prompt_saves' and column_name = 'folder_id') then
+     alter table public.prompt_saves add column folder_id uuid references public.folders(id) on delete set null;
+  end if;
+end $$;
+
 =====================================================
 */
 
@@ -100,11 +132,22 @@ if (!device_id || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 
 // Categories
 const DEFAULT_CATEGORIES = ['coding', 'writing', 'art', 'other'];
-let categories = JSON.parse(localStorage.getItem('categories') || JSON.stringify(DEFAULT_CATEGORIES));
+let categories = [];
+try { categories = JSON.parse(localStorage.getItem('categories') || JSON.stringify(DEFAULT_CATEGORIES)); } catch (e) { categories = DEFAULT_CATEGORIES; }
 
 // Prompts Data
-let prompts = JSON.parse(localStorage.getItem('prompts') || '[]');
-let offlineQueue = JSON.parse(localStorage.getItem('offlineQueue') || '[]');
+let prompts = [];
+try { prompts = JSON.parse(localStorage.getItem('prompts') || '[]'); } catch (e) { console.error('Corrupt Prompts', e); localStorage.removeItem('prompts'); }
+
+let offlineQueue = [];
+try { offlineQueue = JSON.parse(localStorage.getItem('offlineQueue') || '[]'); } catch (e) { console.error('Corrupt Queue', e); localStorage.removeItem('offlineQueue'); }
+
+let folders = [];
+try { folders = JSON.parse(localStorage.getItem('folders') || '[]'); } catch (e) { console.error('Resetting Folders', e); localStorage.removeItem('folders'); }
+let activeFolderId = null; // null = 'All Prompts'
+
+console.log("App Start: Parsed Data", { prompts_len: prompts.length, offlineQueue_len: offlineQueue.length, folders_len: folders.length });
+
 
 if (SUPABASE_URL && SUPABASE_KEY) {
   supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
@@ -151,95 +194,111 @@ let currentFilter = 'all';
 
 // ---------- App Start ----------
 (async function initApp() {
-  applyTheme();
-  setupEventListeners();
-  setupAuthListeners();
-  renderCategories();
-  renderPrompts(); // Optimistic Render: Show cached data IMMEDIATELY before waiting for Auth/Supabase
-  if (supabase) {
-    supabase.auth.onAuthStateChange(async (event, session) => {
-      // Handle both explicit SIGNED_IN and page load INITIAL_SESSION
-      if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && session) {
+  try {
+    console.log("initApp running");
+    applyTheme();
+    setupEventListeners();
+    setupAuthListeners();
+    renderCategories();
+    renderFolderStream();
+    renderPrompts(); // Optimistic Render: Show cached data IMMEDIATELY before waiting for Auth/Supabase
+    if (supabase) {
+      supabase.auth.onAuthStateChange(async (event, session) => {
+        // Handle both explicit SIGNED_IN and page load INITIAL_SESSION
+        if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && session) {
 
-        // --- FIX: Trust the session ---
-        // We do NOT sign out if intent is missing. 
-        // We only check it to clean it up or for metrics if needed.
-        const intent = localStorage.getItem('user_intent_login');
-        if (intent) {
-          console.log('Completing login flow...');
-          localStorage.removeItem('user_intent_login'); // Cleanup
-        } else {
-          console.log('Session restored (Background/Guest to User).');
-        }
-        // -------------------------------
+          // --- FIX: Trust the session ---
+          // We do NOT sign out if intent is missing. 
+          // We only check it to clean it up or for metrics if needed.
+          const intent = localStorage.getItem('user_intent_login');
+          if (intent) {
+            console.log('Completing login flow...');
+            localStorage.removeItem('user_intent_login'); // Cleanup
+          } else {
+            console.log('Session restored (Background/Guest to User).');
+          }
+          // -------------------------------
 
-        user_session = session;
-        hideAuthOverlay();
-        renderUserProfile(session.user);
-        updateAuthUI();
-
-        // Show banner if session exists (and not dismissed previously if we had that logic)
-        const banner = document.getElementById('welcome-banner');
-        if (banner) banner.classList.remove('hidden');
-
-        // Sync only if not just a refresh? 
-        // Ideally syncData handles idempotency.
-        if (event === 'SIGNED_IN') {
-          await syncData();
-        } else {
-          // For INITIAL_SESSION, maybe we just load? 
-          // syncData calls loadPromptsFromSupabaseAndMerge.
-          // Let's call it to be safe and ensure data is fresh.
-          await syncData();
-        }
-
-      } else if (event === 'SIGNED_OUT') {
-        // Only run cleanup if not already done (avoid double toast)
-        if (user_session) {
-          user_session = null;
-          renderUserProfile(null);
+          user_session = session;
+          hideAuthOverlay();
+          renderUserProfile(session.user);
           updateAuthUI();
-          renderPrompts();
-          showToast('Logged out');
+
+          // Show banner if session exists (and not dismissed previously if we had that logic)
           const banner = document.getElementById('welcome-banner');
-          if (banner) banner.classList.add('hidden');
+          if (banner) banner.classList.remove('hidden');
 
-          // Clear intent
-          localStorage.removeItem('user_intent_login');
+          // Sync only if not just a refresh? 
+          // Ideally syncData handles idempotency.
+          if (event === 'SIGNED_IN') {
+            await syncData();
+          } else {
+            // For INITIAL_SESSION, maybe we just load? 
+            // syncData calls loadPromptsFromSupabaseAndMerge.
+            // Let's call it to be safe and ensure data is fresh.
+            await syncData();
+          }
+
+        } else if (event === 'SIGNED_OUT') {
+          // Only run cleanup if not already done (avoid double toast)
+          if (user_session) {
+            user_session = null;
+            renderUserProfile(null);
+            updateAuthUI();
+            renderPrompts();
+            showToast('Logged out');
+            const banner = document.getElementById('welcome-banner');
+            if (banner) banner.classList.add('hidden');
+
+            // Clear intent
+            localStorage.removeItem('user_intent_login');
+          }
         }
-      }
-    });
-  }
-
-  // Auth Check - Removed manual getSession call as onAuthStateChange handles INITIAL_SESSION now.
-  // We keep the else block for local-only non-supabase flow if configured without credentials?
-  // But wait, if we rely on INITIAL_SESSION, we might need to wait for it?
-  // Actually, onAuthStateChange fires 'INITIAL_SESSION' very quickly on load.
-  // However, for pure Guest Mode (no session ever), we might need to handle the case where no event fires?
-  // Supabase Auth listener usually handles the session check internally.
-  // BUT the previous code had a specific check:
-  // if (!user_session) showAuthOverlay();
-
-  // Let's rely on the listener. If no session comes in, we might stay in "guest" implicitly?
-  // But we need to show the Auth Overlay if appropriate.
-
-  // To match previous behavior safely:
-  if (supabase) {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
-      showAuthOverlay();
+      });
     }
-    // ALWAYS render cached prompts initially to prevent empty state
-    renderPrompts();
-    // If session exists, onAuthStateChange will handle it (INITIAL_SESSION)
-  } else {
-    // No Supabase, just render local
+
+    // Auth Check - Removed manual getSession call as onAuthStateChange handles INITIAL_SESSION now.
+    // We keep the else block for local-only non-supabase flow if configured without credentials?
+    // But wait, if we rely on INITIAL_SESSION, we might need to wait for it?
+    // Actually, onAuthStateChange fires 'INITIAL_SESSION' very quickly on load.
+    // However, for pure Guest Mode (no session ever), we might need to handle the case where no event fires?
+    // Supabase Auth listener usually handles the session check internally.
+    // BUT the previous code had a specific check:
+    // if (!user_session) showAuthOverlay();
+
+    // Let's rely on the listener. If no session comes in, we might stay in "guest" implicitly?
+    // But we need to show the Auth Overlay if appropriate.
+
+    // To match previous behavior safely:
+    if (supabase) {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        showAuthOverlay();
+      }
+      // ALWAYS render cached prompts initially to prevent empty state
+      renderPrompts();
+      // If session exists, onAuthStateChange will handle it (INITIAL_SESSION)
+    } else {
+      // No Supabase, just render local
+      renderPrompts();
+    }
+
+    // Force render folders (safe)
+    try { renderFolderStream(); } catch (e) { console.error("Render Stream Failed", e); } // id: added-try-catch
+
+  } catch (err) {
+    console.error("Init App Error:", err);
+    // Fallback
     renderPrompts();
   }
 })();
 
+// Debug
+// (Moved debug assignments to EOF)
+
 async function syncData() {
   await loadCategoriesFromCloud();
+  await syncFolders(); // Folder Sync
   await syncOfflineQueue();
   await loadPromptsFromSupabaseAndMerge();
   setupRealtime();
@@ -454,6 +513,7 @@ function setupEventListeners() {
   // Fab & Modal
   fab.addEventListener('click', () => {
     openModal();
+    if (window.tagManager) window.tagManager.reset(); // Reset tags
     // Animation reset
     fab.classList.remove('pulse-animation');
   });
@@ -490,7 +550,7 @@ function setupEventListeners() {
     document.getElementById('title').value = analysis.title;
     // Set category using custom event to update dropdown UI
     updateCategoryDropdownUI(modalCategoryDropdown, analysis.category);
-    document.getElementById('tags').value = analysis.tags.join(', ');
+    if (window.tagManager) window.tagManager.reset(analysis.tags);
   });
 
   // Form Submit
@@ -519,6 +579,14 @@ function setupEventListeners() {
   setupCustomDropdown(customCategoryDropdown, (val) => {
     currentFilter = val;
     renderPrompts(searchInput.value, currentFilter);
+
+    // Visual Active State
+    const selectedEl = customCategoryDropdown.querySelector('.dropdown-selected');
+    if (val !== 'all') {
+      selectedEl.classList.add('active-filter');
+    } else {
+      selectedEl.classList.remove('active-filter');
+    }
   });
 
   setupCustomDropdown(modalCategoryDropdown, (val) => {
@@ -532,6 +600,14 @@ function setupEventListeners() {
         document.getElementById('category').value = newCat;
       }
     }
+  });
+
+  // Folder Dropdown Logic
+  setupCustomDropdown(document.getElementById('folderDropdown'), (val) => {
+    document.getElementById('folder').value = val;
+    // Visual update handled by generic click handler in setupCustomDropdown
+    // but we want to ensure text updates correctly for complex HTML options
+    // Actually setupCustomDropdown sets textContent = option.textContent, which includes emoji. Good.
   });
 
   // Quick Paste Enter Key
@@ -618,7 +694,8 @@ async function handleFormSubmit(e) {
     tags,
     date: new Date().toISOString(),
     favorite: id ? (prompts.find(p => p.id === id)?.favorite || false) : false,
-    cloud_id: id ? (prompts.find(p => p.id === id)?.cloud_id) : undefined
+    cloud_id: id ? (prompts.find(p => p.id === id)?.cloud_id) : undefined,
+    folder_id: document.getElementById('folder') ? (document.getElementById('folder').value || null) : null
   };
 
   if (id) {
@@ -634,6 +711,7 @@ async function handleFormSubmit(e) {
   showToast('Prompt saved!');
 
   await savePromptToSupabase(promptData);
+  if (window.tagManager) await window.tagManager.syncTagsToCloud();
 }
 
 function handleQuickAdd() {
@@ -659,6 +737,7 @@ function handleQuickAdd() {
   quickPaste.value = '';
   showToast('Saved!');
   savePromptToSupabase(newPrompt);
+  if (window.tagManager) window.tagManager.syncTagsToCloud(newPrompt.tags);
 }
 
 async function deletePrompt(id) {
@@ -731,7 +810,7 @@ async function savePromptToSupabase(prompt) {
     tags: tagsStr,
     favorite: !!prompt.favorite,
     category: categoryVal,
-    // If logged in, attach user_id. Always attach device_id for tracking history if needed.
+    folder_id: prompt.folder_id || null, // Folder support
     user_id: user_session ? user_session.user.id : null,
     device_id: device_id
   };
@@ -815,8 +894,10 @@ async function loadPromptsFromSupabaseAndMerge() {
         favorite: row.favorite,
         category: row.category,
         date: row.created_at,
-        device_id: row.device_id, // keep metadata
-        user_id: row.user_id
+        date: row.created_at,
+        device_id: row.device_id,
+        user_id: row.user_id,
+        folder_id: row.folder_id // Map folder_id
       });
     });
 
@@ -908,14 +989,199 @@ async function syncCategoriesToCloud() {
   }, { onConflict: 'device_id' });
 }
 
+// ---------- Folder System Logic ----------
+
+async function syncFolders() {
+  if (!supabase || !user_session) return; // Only sync if logged in
+
+  const { data, error } = await supabase.from('folders').select('*').order('created_at');
+  if (data && !error) {
+    folders = data;
+    localStorage.setItem('folders', JSON.stringify(folders));
+    renderFolderStream();
+  }
+}
+
+async function createFolder(name) {
+  const newFolder = {
+    id: crypto.randomUUID(),
+    name: name,
+    user_id: user_session ? user_session.user.id : null,
+    created_at: new Date().toISOString()
+  };
+
+  folders.push(newFolder);
+  localStorage.setItem('folders', JSON.stringify(folders));
+
+  // Switch to it
+  activeFolderId = newFolder.id;
+  renderFolderStream();
+  renderPrompts();
+
+  if (user_session && supabase) {
+    await supabase.from('folders').insert([{
+      id: newFolder.id,
+      user_id: user_session.user.id,
+      name: newFolder.name
+    }]);
+  }
+}
+
+async function deleteFolder(id) {
+  if (!confirm("Delete this folder? Prompts inside will be moved to 'All Prompts'.")) return;
+
+  // Eject prompts locally
+  let changed = false;
+  prompts.forEach(p => {
+    if (p.folder_id === id) {
+      p.folder_id = null;
+      changed = true;
+    }
+  });
+
+  if (changed) saveToLocalStorage();
+
+  // Remove folder locally
+  folders = folders.filter(f => f.id !== id);
+  localStorage.setItem('folders', JSON.stringify(folders));
+
+  if (activeFolderId === id) activeFolderId = null;
+
+  renderFolderStream();
+  renderPrompts();
+
+  // Cloud Delete
+  if (user_session && supabase) {
+    await supabase.from('folders').delete().eq('id', id);
+    // Note: SQL 'ON DELETE SET NULL' handles the prompts in cloud automatically!
+  }
+}
+
+// ---------- Folder UI Renderer ----------
+
+function renderFolderStream() {
+  console.log("renderFolderStream called", folders);
+  const container = document.getElementById('folderStream');
+  if (!container) return;
+
+  container.innerHTML = '';
+
+  // 1. All Prompts Pill
+  const allPill = document.createElement('div');
+  allPill.className = `folder-pill ${activeFolderId === null ? 'active' : ''}`;
+  allPill.textContent = 'All Prompts';
+  allPill.onclick = () => {
+    activeFolderId = null;
+    renderFolderStream();
+    renderPrompts();
+  };
+  container.appendChild(allPill);
+
+  // 2. Folder Pills
+  folders.forEach(f => {
+    const pill = document.createElement('div');
+    pill.className = `folder-pill ${activeFolderId === f.id ? 'active' : ''}`;
+    pill.innerHTML = `<span class="icon">📁</span> <span class="text">${escapeHtml(f.name)}</span>`;
+
+    // Select
+    pill.onclick = () => {
+      activeFolderId = f.id;
+      renderFolderStream();
+      renderPrompts();
+    };
+
+    // Delete (Context Menu)
+    pill.oncontextmenu = (e) => {
+      e.preventDefault();
+      deleteFolder(f.id);
+    };
+
+    container.appendChild(pill);
+  });
+
+  // 3. Add Button
+  const addBtn = document.createElement('div');
+  addBtn.className = 'folder-add-pill';
+  addBtn.textContent = '+';
+  addBtn.title = "New Folder";
+  addBtn.onclick = () => {
+    // Inline Input Replacement
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'folder-pill folder-rename-input';
+    input.placeholder = 'Name';
+    input.style.border = '1px solid var(--primary-color)';
+    input.style.background = '#fff';
+
+    container.replaceChild(input, addBtn);
+    input.focus();
+
+    const commit = () => {
+      const name = input.value.trim();
+      if (name) {
+        createFolder(name);
+      } else {
+        renderFolderStream(); // Reset
+      }
+    };
+
+    input.onblur = commit;
+    input.onkeydown = (e) => {
+      if (e.key === 'Enter') { input.blur(); }
+      if (e.key === 'Escape') { renderFolderStream(); }
+    };
+  };
+
+  container.appendChild(addBtn);
+
+  // 4. Update Dropdown in Modal (if open or generally)
+  renderFolderDropdown();
+}
+
+function renderFolderDropdown() {
+  const dropdown = document.getElementById('folderDropdown');
+  if (!dropdown) return;
+
+  const optionsContainer = dropdown.querySelector('.dropdown-options');
+
+  let html = `<div class="dropdown-option" data-value="">No Folder</div>`;
+  folders.forEach(f => {
+    html += `<div class="dropdown-option" data-value="${f.id}">📁 ${escapeHtml(f.name)}</div>`;
+  });
+
+  optionsContainer.innerHTML = html;
+
+  // Refresh selection UI if specific value set
+  const currentVal = document.getElementById('folder').value;
+  updateDropdownSelection(dropdown, currentVal);
+}
+
+function updateDropdownSelection(dropdown, value) {
+  const selected = dropdown.querySelector('.dropdown-selected');
+  const options = dropdown.querySelectorAll('.dropdown-option');
+  let text = 'No Folder'; // Default text
+
+  options.forEach(opt => {
+    if (opt.dataset.value === value) {
+      opt.classList.add('selected');
+      text = opt.textContent;
+    } else {
+      opt.classList.remove('selected');
+    }
+  });
+
+  selected.textContent = text;
+}
+
+
 
 // ---------- Helper Functions ----------
 function renderPrompts(filterText = '', categoryFilter = 'all') {
   grid.innerHTML = '';
 
   // TASK 2: Pinned Welcome Prompt (Additive)
-  // Show for EVERYONE (Guests + Logged In) if not searching
-  if (!filterText && categoryFilter === 'all') {
+  // Show for EVERYONE (Guests + Logged In) if not searching AND in 'All Prompts'
+  if (!filterText && categoryFilter === 'all' && !activeFolderId) {
     const pinnedCard = document.createElement('div');
     pinnedCard.className = 'prompt-card pinned-guide-card';
     pinnedCard.innerHTML = `
@@ -981,9 +1247,11 @@ This is your personal prompt library — built to help you think, create, and mo
         matchIdx = body.toLowerCase().indexOf(query);
         matchLen = query.length;
       }
-      // Only include if matches query and category
+      // Only include if matches query, category, AND folder
       const matchCat = categoryFilter === 'all' || p.category === categoryFilter;
-      if ((query && matchType && matchCat) || (!query && matchCat)) {
+      const matchFolder = !activeFolderId || p.folder_id === activeFolderId;
+
+      if (matchFolder && ((query && matchType && matchCat) || (!query && matchCat))) {
         // Build snippet (for body, show context; for title/tag, show whole)
         if (matchType === 'body' && matchIdx !== -1) {
           const start = Math.max(0, matchIdx - 30);
@@ -1007,11 +1275,11 @@ This is your personal prompt library — built to help you think, create, and mo
     // Priority 1: Favorite prompts come first
     if (a.prompt.favorite && !b.prompt.favorite) return -1;
     if (!a.prompt.favorite && b.prompt.favorite) return 1;
-    
+
     // Priority 2: Search ranking (title > tag > body)
     const rank = { title: 0, tag: 1, body: 2 };
     if (rank[a.matchType] !== rank[b.matchType]) return rank[a.matchType] - rank[b.matchType];
-    
+
     // Priority 3: Newer first
     return (b.prompt.created_at || 0) > (a.prompt.created_at || 0) ? 1 : -1;
   });
@@ -1019,7 +1287,7 @@ This is your personal prompt library — built to help you think, create, and mo
   // If no query, show all prompts (with favorites pinned at top)
   if (!query) {
     results = prompts
-      .filter(p => categoryFilter === 'all' || p.category === categoryFilter)
+      .filter(p => (categoryFilter === 'all' || p.category === categoryFilter) && (!activeFolderId || p.folder_id === activeFolderId))
       .map(p => ({ prompt: p, matchType: null, snippet: p.body.substring(0, 150) + (p.body.length > 150 ? '…' : '') }))
       .sort((a, b) => {
         // Favorites always appear first, then by creation date
@@ -1103,7 +1371,10 @@ This is your personal prompt library — built to help you think, create, and mo
 
     card.innerHTML = `
       <div class="card-header">
-        <div class="card-title">${titleHtml}</div>
+        <div class="card-title">
+            ${titleHtml}
+            ${(new Date() - new Date(p.date || 0)) < 86400000 ? '<span class="badge-new">New</span>' : ''}
+        </div>
         <div class="card-actions">
            <button class="icon-btn fav-btn ${p.favorite ? 'active' : ''}" onclick="toggleFavorite('${p.id}')" title="Favorite">${favIcon}</button>
            <button class="icon-btn" onclick="copyPrompt('${p.id}')" title="Copy">${copyIcon}</button>
@@ -1267,6 +1538,13 @@ function openModal() {
   document.getElementById('modalTitle').textContent = 'Add Prompt';
   document.getElementById('category').value = 'other';
   updateCategoryDropdownUI(modalCategoryDropdown, 'other');
+
+  // Pre-select current folder if active
+  const currentFolder = activeFolderId || '';
+  document.getElementById('folder').value = currentFolder;
+  renderFolderDropdown(); // Refresh options
+  updateDropdownSelection(document.getElementById('folderDropdown'), currentFolder);
+
   modalOverlay.classList.remove('hidden');
   setTimeout(() => modalOverlay.classList.add('visible'), 10);
 }
@@ -1277,9 +1555,17 @@ function openEditModal(id) {
   document.getElementById('promptId').value = p.id;
   document.getElementById('title').value = p.title;
   document.getElementById('body').value = p.body;
-  document.getElementById('tags').value = (p.tags || []).join(', ');
+  document.getElementById('body').value = p.body;
+  // document.getElementById('tags').value = (p.tags || []).join(', ');
+  if (window.tagManager) window.tagManager.reset(p.tags);
+  if (window.tagManager) window.tagManager.reset(p.tags);
   document.getElementById('category').value = p.category || 'other';
   updateCategoryDropdownUI(modalCategoryDropdown, p.category || 'other');
+
+  // Load Folder
+  document.getElementById('folder').value = p.folder_id || '';
+  renderFolderDropdown();
+  updateDropdownSelection(document.getElementById('folderDropdown'), p.folder_id || '');
 
   document.getElementById('modalTitle').textContent = 'Edit Prompt';
   modalOverlay.classList.remove('hidden');
@@ -1403,6 +1689,186 @@ function importDataFile(file) {
   };
   reader.readAsText(file);
 }
+
+
+// ========================================
+// Smart Tags Manager
+// ========================================
+class TagManager {
+  constructor() {
+    this.tags = new Set();
+    this.wrapper = document.getElementById('tagInputWrapper');
+    this.container = document.getElementById('tagChips');
+    this.input = document.getElementById('tagInput');
+    this.hiddenInput = document.getElementById('tags');
+    this.suggestionsBox = document.getElementById('tagSuggestions');
+    this.savedTags = new Set(); // Global dictionary of tags
+
+    this.init();
+  }
+
+  init() {
+    if (!this.input) return;
+
+    // Input events
+    this.input.addEventListener('keydown', (e) => this.handleKeydown(e));
+    this.input.addEventListener('input', () => this.handleInput());
+    this.input.addEventListener('focus', () => this.handleInput()); // Show suggestions on focus
+
+    // Close suggestions on click outside
+    document.addEventListener('click', (e) => {
+      if (!this.wrapper.contains(e.target)) {
+        this.closeSuggestions();
+      }
+    });
+
+    this.loadGlobalTags();
+  }
+
+  // Load distinct tags for auto-suggestion
+  async loadGlobalTags() {
+    // 1. Load from local prompts
+    prompts.forEach(p => {
+      if (Array.isArray(p.tags)) p.tags.forEach(t => this.savedTags.add(t.toLowerCase()));
+      else if (typeof p.tags === 'string') p.tags.split(',').forEach(t => this.savedTags.add(t.trim().toLowerCase()));
+    });
+
+    // 2. Load from DB (if connected)
+    if (supabase) {
+      try {
+        const { data } = await supabase.from('tags').select('name').limit(100);
+        if (data) data.forEach(Row => this.savedTags.add(Row.name.toLowerCase()));
+      } catch (err) { /* silent fail */ }
+    }
+  }
+
+  // Add a tag (from input or suggestion)
+  addTag(tagName) {
+    const cleanTag = tagName.trim().toLowerCase();
+    if (!cleanTag) return;
+    if (this.tags.has(cleanTag)) {
+      this.input.value = ''; // Duplicate
+      return;
+    }
+
+    this.tags.add(cleanTag);
+    this.renderChips();
+    this.input.value = '';
+    this.closeSuggestions();
+    this.updateHiddenInput();
+  }
+
+  // Remove a tag
+  removeTag(tagName) {
+    this.tags.delete(tagName);
+    this.renderChips();
+    this.updateHiddenInput();
+  }
+
+  // Render chips UI
+  renderChips() {
+    this.container.innerHTML = '';
+    this.tags.forEach(tag => {
+      const chip = document.createElement('div');
+      chip.className = 'tag-chip';
+      chip.innerHTML = `
+        ${escapeHtml(tag)}
+        <span class="tag-chip-remove" onclick="tagManager.removeTag('${escapeHtml(tag)}')">&times;</span>
+      `;
+      this.container.appendChild(chip);
+    });
+  }
+
+  // Update hidden CSV input for form submission
+  updateHiddenInput() {
+    this.hiddenInput.value = Array.from(this.tags).join(', ');
+  }
+
+  // Handle Input typing
+  handleInput() {
+    const query = this.input.value.trim().toLowerCase();
+    if (query.length === 0) {
+      // Optional: show recent/popular tags if empty? For now, nothing.
+      // this.closeSuggestions();
+      // return;
+    }
+
+    // Filter suggestions
+    const matches = Array.from(this.savedTags)
+      .filter(t => t.includes(query) && !this.tags.has(t))
+      .slice(0, 5); // Limit to 5
+
+    this.renderSuggestions(matches);
+  }
+
+  handleKeydown(e) {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault();
+      this.addTag(this.input.value);
+    } else if (e.key === 'Backspace' && this.input.value === '' && this.tags.size > 0) {
+      // Remove last tag on backspace
+      const lastTag = Array.from(this.tags).pop();
+      this.removeTag(lastTag);
+    }
+  }
+
+  renderSuggestions(matches) {
+    if (matches.length === 0) {
+      this.closeSuggestions();
+      return;
+    }
+
+    this.suggestionsBox.innerHTML = matches.map(tag => `
+      <div class="tag-suggestion-item" onclick="tagManager.addTag('${tag}')">
+        ${escapeHtml(tag)}
+      </div>
+    `).join('');
+
+    this.suggestionsBox.classList.remove('hidden');
+  }
+
+  closeSuggestions() {
+    this.suggestionsBox.classList.add('hidden');
+    this.suggestionsBox.innerHTML = '';
+  }
+
+  // Reset for new/edit prompt
+  reset(initialTags = []) {
+    this.tags = new Set();
+    if (Array.isArray(initialTags)) {
+      initialTags.forEach(t => this.tags.add(t.trim().toLowerCase()));
+    } else if (typeof initialTags === 'string') {
+      initialTags.split(',').forEach(t => {
+        const clean = t.trim().toLowerCase();
+        if (clean) this.tags.add(clean);
+      });
+    }
+
+    this.renderChips();
+    this.updateHiddenInput();
+    this.loadGlobalTags(); // Refresh suggestions
+  }
+
+  // Sync new tags to DB (called on Save)
+  // Sync new tags to DB (called on Save)
+  async syncTagsToCloud(tagsToSync = null) {
+    if (!supabase) return;
+    const source = tagsToSync ? new Set(tagsToSync) : this.tags;
+    const newTags = Array.from(source).map(name => ({ name }));
+
+    // Fire and forget insert (ignore duplicates)
+    if (newTags.length > 0) {
+      try {
+        await supabase.from('tags').upsert(newTags, { onConflict: 'name', ignoreDuplicates: true });
+      } catch (e) { console.warn('Tag sync error', e); }
+    }
+  }
+}
+
+// Init Tag Manager
+const tagManager = new TagManager();
+window.tagManager = tagManager; // global for onclicks
+
 
 function capitalize(s) {
   if (!s) return '';
@@ -1576,5 +2042,8 @@ const NetworkManager = {
     showAuthOverlay();
   }
 };
-
+// Debug
+window.renderFolderStream = renderFolderStream;
+window.createFolder = createFolder;
+console.log("EOF reached - App.js Loaded");
 document.addEventListener('DOMContentLoaded', () => NetworkManager.init());
