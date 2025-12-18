@@ -295,12 +295,50 @@
                     <!-- Hidden input to store CSV for form submission -->
                     <input type="hidden" id="tags" name="tags">
                 </div>
+                <div class="form-group">
+                    <label>Storage Location</label>
+                    <div class="storage-selection">
+                        <label class="storage-option">
+                            <input type="radio" name="storageType" value="local">
+                            <span class="storage-box">
+                                <span class="icon">💻</span>
+                                <span class="text">Local Only</span>
+                            </span>
+                        </label>
+                        <label class="storage-option">
+                            <input type="radio" name="storageType" value="cloud" checked>
+                            <span class="storage-box">
+                                <span class="icon">☁️</span>
+                                <span class="text">Cloud Sync</span>
+                            </span>
+                        </label>
+                    </div>
+                </div>
                 <div class="form-actions">
                     <button type="button" id="autoFillBtn" class="secondary-btn"
                         title="Auto-fill metadata from body text">✨ Auto-Fill</button>
                     <button type="submit" class="primary-btn">Save Prompt</button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- Variable Fill Modal -->
+    <div id="variableModalOverlay" class="modal-overlay hidden">
+        <div class="modal glass-panel">
+            <div class="modal-header">
+                <h2 id="varModalTitle">Fill in the Blanks</h2>
+                <button id="closeVarModal" class="close-btn">&times;</button>
+            </div>
+            <p class="modal-subtitle">Customize your prompt template before copying.</p>
+            <div id="variableFields" class="variable-fields">
+                <!-- Fields injected by JS -->
+            </div>
+            <div class="form-actions" style="margin-top: 24px;">
+                <button id="copyFinalBtn" class="primary-btn">
+                    <span class="btn-text">Copy Final Prompt</span>
+                </button>
+            </div>
         </div>
     </div>
 

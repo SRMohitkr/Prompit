@@ -174,6 +174,13 @@ const importOption = document.getElementById('importOption');
 const themeOption = document.getElementById('themeOption');
 const fileInput = document.getElementById('fileInput');
 
+// Variable Modal DOM
+const variableModalOverlay = document.getElementById('variableModalOverlay');
+const variableFields = document.getElementById('variableFields');
+const closeVarModalBtn = document.getElementById('closeVarModal');
+const copyFinalBtn = document.getElementById('copyFinalBtn');
+const varModalTitle = document.getElementById('varModalTitle');
+
 // Auth DOM
 const authOverlay = document.getElementById('authOverlay');
 const authEmailForm = document.getElementById('authEmailForm');
@@ -614,6 +621,16 @@ function setupEventListeners() {
   document.getElementById('quickPaste').addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') handleQuickAdd();
   });
+
+  // Variable Modal
+  if (closeVarModalBtn) {
+    closeVarModalBtn.addEventListener('click', () => variableModalOverlay.classList.add('hidden'));
+  }
+  if (variableModalOverlay) {
+    variableModalOverlay.addEventListener('click', (e) => {
+      if (e.target === variableModalOverlay) variableModalOverlay.classList.add('hidden');
+    });
+  }
 }
 
 function setupCustomDropdown(dropdownElement, onSelect) {
@@ -685,6 +702,7 @@ async function handleFormSubmit(e) {
   const category = document.getElementById('category').value || 'other';
   const body = document.getElementById('body').value;
   const tags = document.getElementById('tags').value.split(',').map(t => t.trim()).filter(Boolean);
+  const storageType = document.querySelector('input[name="storageType"]:checked')?.value || 'cloud';
 
   const promptData = {
     id: id || crypto.randomUUID(), // Use UUID for local ID too
@@ -695,7 +713,8 @@ async function handleFormSubmit(e) {
     date: new Date().toISOString(),
     favorite: id ? (prompts.find(p => p.id === id)?.favorite || false) : false,
     cloud_id: id ? (prompts.find(p => p.id === id)?.cloud_id) : undefined,
-    folder_id: document.getElementById('folder') ? (document.getElementById('folder').value || null) : null
+    folder_id: document.getElementById('folder') ? (document.getElementById('folder').value || null) : null,
+    storage: storageType
   };
 
   if (id) {
@@ -710,7 +729,9 @@ async function handleFormSubmit(e) {
   closeModal();
   showToast('Prompt saved!');
 
-  await savePromptToSupabase(promptData);
+  if (storageType === 'cloud') {
+    await savePromptToSupabase(promptData);
+  }
   if (window.tagManager) await window.tagManager.syncTagsToCloud();
 }
 
@@ -728,15 +749,16 @@ function handleQuickAdd() {
     body: text,
     tags: analysis.tags,
     date: new Date().toISOString(),
-    favorite: analysis.isLikelyFavorite
+    favorite: analysis.isLikelyFavorite,
+    storage: 'local' // keep local default for quick save
   };
 
   prompts.unshift(newPrompt);
   saveToLocalStorage();
   renderPrompts();
   quickPaste.value = '';
-  showToast('Saved!');
-  savePromptToSupabase(newPrompt);
+  showToast('Saved locally!');
+  // skip savePromptToSupabase(newPrompt) for local default
   if (window.tagManager) window.tagManager.syncTagsToCloud(newPrompt.tags);
 }
 
@@ -796,6 +818,11 @@ async function toggleFavorite(id) {
 
 // ---------- Supabase Logic (Updated) ----------
 async function savePromptToSupabase(prompt) {
+  // If explicitly local and not already on cloud, skip
+  if (prompt.storage === 'local' && !prompt.cloud_id) {
+    return null;
+  }
+
   if (!supabase) {
     queueOffline(prompt);
     return null;
@@ -845,6 +872,7 @@ async function savePromptToSupabase(prompt) {
       const localIdx = prompts.findIndex(p => p.id === prompt.id);
       if (localIdx > -1) {
         prompts[localIdx].cloud_id = data.id;
+        prompts[localIdx].storage = 'cloud'; // Mark as cloud since it's now synced
         saveToLocalStorage();
       }
       return data;
@@ -1443,27 +1471,89 @@ function escapeHtml(text) {
 // Track recent copies to prevent accidental double-counting within 2 seconds
 const recentCopies = new Map();
 
+function extractVariables(text) {
+  const regex = /{{(.*?)}}/g;
+  const matches = new Set();
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    if (match[1].trim()) matches.add(match[1].trim());
+  }
+  return Array.from(matches);
+}
+
+let activeVariablePrompt = null;
+
 function copyPrompt(id) {
   const p = prompts.find(x => x.id === id);
   if (!p) return;
 
-  // Copy to clipboard instantly
-  navigator.clipboard.writeText(p.body);
+  const vars = extractVariables(p.body);
+  if (vars.length > 0) {
+    showVariableModal(p, vars);
+    return;
+  }
+
+  // Normal copy
+  doCopy(p.body, id);
+}
+
+function showVariableModal(prompt, vars) {
+  activeVariablePrompt = prompt;
+  variableFields.innerHTML = '';
+
+  vars.forEach(v => {
+    const field = document.createElement('div');
+    field.className = 'variable-field';
+    field.innerHTML = `
+      <label>${escapeHtml(v)}</label>
+      <input type="text" data-var="${escapeHtml(v)}" placeholder="Type something for ${escapeHtml(v)}...">
+    `;
+    variableFields.appendChild(field);
+  });
+
+  variableModalOverlay.classList.remove('hidden');
+  // Focus first input
+  const firstInput = variableFields.querySelector('input');
+  if (firstInput) setTimeout(() => firstInput.focus(), 100);
+}
+
+function handleVariableCopy() {
+  if (!activeVariablePrompt) return;
+
+  let finalBody = activeVariablePrompt.body;
+  const inputs = variableFields.querySelectorAll('input');
+
+  inputs.forEach(input => {
+    const varName = input.getAttribute('data-var');
+    const value = input.value.trim() || `{{${varName}}}`; // Keep it if empty or a default?
+    // Replace all occurrences of {{varName}}
+    const re = new RegExp(`{{${varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}}}`, 'gi');
+    finalBody = finalBody.replace(re, value);
+  });
+
+  navigator.clipboard.writeText(finalBody);
+  variableModalOverlay.classList.add('hidden');
+  showToast('Prompt copied with variables!');
+
+  // Update usage count
+  updateUsageCount(activeVariablePrompt.id);
+}
+
+copyFinalBtn.onclick = handleVariableCopy;
+
+function doCopy(text, id) {
+  navigator.clipboard.writeText(text);
   showToast('Copied to clipboard!');
 
-  // Visual feedback: Change copy button to checkmark briefly
-  // Find the copy button in the card and update its state
+  // Visual feedback
   const card = document.querySelector(`[data-id="${id}"]`);
   if (card) {
     const copyBtn = card.querySelector('.card-actions button:nth-child(2)');
     if (copyBtn) {
-      // Checkmark icon
       const checkIcon = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
       const originalHTML = copyBtn.innerHTML;
       copyBtn.innerHTML = checkIcon;
       copyBtn.classList.add('copied-state');
-
-      // Revert after 1.5 seconds
       setTimeout(() => {
         copyBtn.innerHTML = originalHTML;
         copyBtn.classList.remove('copied-state');
@@ -1471,6 +1561,24 @@ function copyPrompt(id) {
     }
   }
 
+  updateUsageCount(id);
+}
+
+async function updateUsageCount(id) {
+  const idx = prompts.findIndex(x => x.id === id);
+  if (idx === -1) return;
+
+  prompts[idx].total_usage = (prompts[idx].total_usage || 0) + 1;
+  saveToLocalStorage();
+
+  if (user_session && prompts[idx].cloud_id) {
+    await supabase.from('prompt_saves').update({
+      total_usage: prompts[idx].total_usage
+    }).eq('id', prompts[idx].cloud_id);
+  }
+}
+
+function copyPrompt_OLD(id) {
   // Safeguard: Prevent incrementing usage twice within 2 seconds
   const now = Date.now();
   const lastCopyTime = recentCopies.get(id) || 0;
@@ -1539,6 +1647,10 @@ function openModal() {
   document.getElementById('category').value = 'other';
   updateCategoryDropdownUI(modalCategoryDropdown, 'other');
 
+  // Reset Storage Selection (Default to Cloud for Modal)
+  const radioCloud = document.querySelector('input[name="storageType"][value="cloud"]');
+  if (radioCloud) radioCloud.checked = true;
+
   // Pre-select current folder if active
   const currentFolder = activeFolderId || '';
   document.getElementById('folder').value = currentFolder;
@@ -1555,12 +1667,14 @@ function openEditModal(id) {
   document.getElementById('promptId').value = p.id;
   document.getElementById('title').value = p.title;
   document.getElementById('body').value = p.body;
-  document.getElementById('body').value = p.body;
-  // document.getElementById('tags').value = (p.tags || []).join(', ');
-  if (window.tagManager) window.tagManager.reset(p.tags);
   if (window.tagManager) window.tagManager.reset(p.tags);
   document.getElementById('category').value = p.category || 'other';
   updateCategoryDropdownUI(modalCategoryDropdown, p.category || 'other');
+
+  // Load Storage Status
+  const storage = (p.storage === 'local' || !p.cloud_id) ? 'local' : 'cloud';
+  const radio = document.querySelector(`input[name="storageType"][value="${storage}"]`);
+  if (radio) radio.checked = true;
 
   // Load Folder
   document.getElementById('folder').value = p.folder_id || '';
