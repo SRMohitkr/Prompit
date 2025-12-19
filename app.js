@@ -47,13 +47,6 @@ begin
   end if;
 end $$;
 
--- Enforce types
-alter table public.prompt_saves 
-  alter column device_id type text,
-  alter column body type text,
-  alter column tags type text,
-  alter column category type text;
-
 -- 3. Create device_metadata table
 create table if not exists public.device_metadata (
   device_id text primary key,
@@ -61,26 +54,48 @@ create table if not exists public.device_metadata (
   updated_at timestamp with time zone default now()
 );
 
--- 4. Enable RLS
+-- 4. Create tags table
+create table if not exists public.tags (
+  id uuid primary key default gen_random_uuid(),
+  name text unique not null,
+  created_at timestamp with time zone default now()
+);
+
+-- 5. Enable RLS
 alter table public.prompt_saves enable row level security;
 alter table public.device_metadata enable row level security;
+alter table public.tags enable row level security;
 
--- 5. RLS Policies (Drop old to avoid conflicts)
+-- 6. RLS Policies (Safe drop/recreate sequence)
 drop policy if exists "Enable all access for devices" on prompt_saves;
 drop policy if exists "Users and Devices can manage their own prompts" on prompt_saves;
 drop policy if exists "Devices can manage metadata" on device_metadata;
+drop policy if exists "Allow public read access to tags" on tags;
 
--- Policy 1 & 2 Combined: Guest (device_id) OR User (auth.uid)
+-- Now safe to alter columns
+alter table public.prompt_saves 
+  alter column device_id type text,
+  alter column body type text,
+  alter column tags type text,
+  alter column category type text;
+
+alter table public.device_metadata alter column device_id type text;
+
 create policy "Users and Devices can manage their own prompts" on prompt_saves
   for all using (
     (auth.uid() = user_id) OR 
-    (device_id = current_setting('request.header.device-id', true))
+    (device_id = current_setting('request.headers', true)::json->>'x-device-id') OR
+    (role = 'anon')
   );
 
 create policy "Devices can manage metadata" on device_metadata
   for all using (
-    device_id = current_setting('request.header.device-id', true)
+    (device_id = current_setting('request.headers', true)::json->>'x-device-id') OR
+    (role = 'anon')
   );
+
+create policy "Allow public read access to tags" on tags
+  for select using (true);
 
 
 -- 6. Folder System Support
@@ -151,7 +166,7 @@ console.log("App Start: Parsed Data", { prompts_len: prompts.length, offlineQueu
 
 if (SUPABASE_URL && SUPABASE_KEY) {
   supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
-    global: { headers: { 'device-id': device_id } }
+    global: { headers: { 'x-device-id': device_id } }
   });
 } else {
   console.warn("Supabase credentials missing in cloudConfig.js");
@@ -180,6 +195,17 @@ const variableFields = document.getElementById('variableFields');
 const closeVarModalBtn = document.getElementById('closeVarModal');
 const copyFinalBtn = document.getElementById('copyFinalBtn');
 const varModalTitle = document.getElementById('varModalTitle');
+
+// Template Choice Modal DOM
+const templateChoiceOverlay = document.getElementById('templateChoiceOverlay');
+const templateChoiceYes = document.getElementById('templateChoiceYes');
+const templateChoiceNo = document.getElementById('templateChoiceNo');
+
+// Variable Selection Modal DOM
+const varSelectOverlay = document.getElementById('varSelectOverlay');
+const varSelectPreview = document.getElementById('varSelectPreview');
+const closeVarSelectModalBtn = document.getElementById('closeVarSelectModal');
+const confirmVarSelectBtn = document.getElementById('confirmVarSelectBtn');
 
 // Auth DOM
 const authOverlay = document.getElementById('authOverlay');
@@ -994,7 +1020,7 @@ function renderCategories() {
 
 async function loadCategoriesFromCloud() {
   if (!supabase || !device_id) return;
-  const { data } = await supabase.from('device_metadata').select('categories').eq('device_id', device_id).single();
+  const { data } = await supabase.from('device_metadata').select('categories').eq('device_id', device_id).maybeSingle();
   if (data && data.categories && Array.isArray(data.categories)) {
     // Merge unique
     const set = new Set([...categories, ...data.categories]);
@@ -1476,7 +1502,8 @@ function extractVariables(text) {
   const matches = new Set();
   let match;
   while ((match = regex.exec(text)) !== null) {
-    if (match[1].trim()) matches.add(match[1].trim());
+    const varName = match[1].trim();
+    if (varName) matches.add(varName);
   }
   return Array.from(matches);
 }
@@ -1493,20 +1520,25 @@ function copyPrompt(id) {
     return;
   }
 
-  // Normal copy
-  doCopy(p.body, id);
+  // Normal copy -> Propose Template creation
+  showTemplateChoiceModal(p);
 }
 
 function showVariableModal(prompt, vars) {
   activeVariablePrompt = prompt;
   variableFields.innerHTML = '';
 
-  vars.forEach(v => {
+  // Sort variables for a deterministic, professional feel
+  vars.sort((a, b) => a.localeCompare(b)).forEach(v => {
     const field = document.createElement('div');
     field.className = 'variable-field';
+
+    // Humanize label: "tone" -> "Tone"
+    const humanLabel = v.charAt(0).toUpperCase() + v.slice(1);
+
     field.innerHTML = `
-      <label>${escapeHtml(v)}</label>
-      <input type="text" data-var="${escapeHtml(v)}" placeholder="Type something for ${escapeHtml(v)}...">
+      <label>${escapeHtml(humanLabel)}</label>
+      <input type="text" data-var="${escapeHtml(v)}" placeholder="What is the ${escapeHtml(v)}?">
     `;
     variableFields.appendChild(field);
   });
@@ -1525,7 +1557,7 @@ function handleVariableCopy() {
 
   inputs.forEach(input => {
     const varName = input.getAttribute('data-var');
-    const value = input.value.trim() || `{{${varName}}}`; // Keep it if empty or a default?
+    const value = input.value.trim(); // replace empty with empty text
     // Replace all occurrences of {{varName}}
     const re = new RegExp(`{{${varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}}}`, 'gi');
     finalBody = finalBody.replace(re, value);
@@ -1533,13 +1565,214 @@ function handleVariableCopy() {
 
   navigator.clipboard.writeText(finalBody);
   variableModalOverlay.classList.add('hidden');
-  showToast('Prompt copied with variables!');
+  showToast('Template filled and copied to clipboard.');
 
   // Update usage count
   updateUsageCount(activeVariablePrompt.id);
 }
 
 copyFinalBtn.onclick = handleVariableCopy;
+
+// ========== NEW TEMPLATE FLOW ==========
+let pendingTemplatePrompt = null;
+let selectedVariableWords = new Set();
+
+// Heuristics to suggest likely variables
+function suggestVariables(text) {
+  const suggestions = new Set();
+  const words = text.split(/\s+/);
+
+  words.forEach((word, index) => {
+    const cleanWord = word.replace(/[.,!?;:"'()[\]{}]/g, '');
+    if (!cleanWord || cleanWord.length < 2) return;
+
+    // Proper nouns (capitalized words not at start of sentence)
+    if (index > 0 && /^[A-Z][a-z]+$/.test(cleanWord)) {
+      suggestions.add(cleanWord);
+    }
+
+    // Quoted text patterns
+    if (/^["'].*["']$/.test(word)) {
+      suggestions.add(cleanWord);
+    }
+
+    // Placeholder patterns like [name], <topic>, etc.
+    if (/^\[.*\]$/.test(word) || /^<.*>$/.test(word)) {
+      suggestions.add(cleanWord.replace(/[\[\]<>]/g, ''));
+    }
+
+    // Numbers and dates
+    if (/^\d+$/.test(cleanWord) || /^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(cleanWord)) {
+      suggestions.add(cleanWord);
+    }
+  });
+
+  return suggestions;
+}
+
+function showTemplateChoiceModal(prompt) {
+  pendingTemplatePrompt = prompt;
+  templateChoiceOverlay.classList.remove('hidden');
+}
+
+function hideTemplateChoiceModal() {
+  templateChoiceOverlay.classList.add('hidden');
+  pendingTemplatePrompt = null;
+}
+
+function showVariableSelectionModal(prompt) {
+  pendingTemplatePrompt = prompt;
+  selectedVariableWords = new Set();
+  const suggestions = suggestVariables(prompt.body);
+
+  // Tokenize the prompt body into words and punctuation
+  const tokens = prompt.body.split(/(\s+|[.,!?;:"'()[\]{}])/g).filter(t => t);
+
+  varSelectPreview.innerHTML = '';
+  tokens.forEach((token, index) => {
+    if (/^\s+$/.test(token)) {
+      // Whitespace - preserve it
+      if (token.includes('\n')) {
+        varSelectPreview.appendChild(document.createElement('br'));
+      } else {
+        varSelectPreview.appendChild(document.createTextNode(token));
+      }
+    } else if (/^[.,!?;:"'()[\]{}]+$/.test(token)) {
+      // Punctuation
+      const span = document.createElement('span');
+      span.className = 'punctuation';
+      span.textContent = token;
+      varSelectPreview.appendChild(span);
+    } else {
+      // Word token
+      const span = document.createElement('span');
+      span.className = 'word-token';
+      span.textContent = token;
+      span.dataset.word = token;
+      span.dataset.index = index;
+
+      // Highlight and Auto-select suggested words
+      if (suggestions.has(token)) {
+        span.classList.add('suggested');
+        span.classList.add('selected'); // Make it selected by default
+        selectedVariableWords.add(token);
+      }
+
+      span.onclick = () => {
+        span.classList.toggle('selected');
+        if (span.classList.contains('selected')) {
+          selectedVariableWords.add(token);
+        } else {
+          selectedVariableWords.delete(token);
+        }
+      };
+
+      varSelectPreview.appendChild(span);
+    }
+  });
+
+  varSelectOverlay.classList.remove('hidden');
+}
+
+function hideVariableSelectionModal() {
+  varSelectOverlay.classList.add('hidden');
+  pendingTemplatePrompt = null;
+  selectedVariableWords = new Set();
+}
+
+function confirmVariableSelection() {
+  console.log('Confirming selection...', {
+    promptId: pendingTemplatePrompt ? pendingTemplatePrompt.id : 'null',
+    selectedWords: Array.from(selectedVariableWords)
+  });
+
+  if (!pendingTemplatePrompt || selectedVariableWords.size === 0) {
+    showToast('Select at least one word to use as a variable.');
+    return;
+  }
+
+  // Replace selected words with {{var_name}} in the prompt body
+  let newBody = pendingTemplatePrompt.body;
+
+  selectedVariableWords.forEach(word => {
+    // Create a variable name (lowercase, underscores for spaces)
+    const varName = word.toLowerCase().replace(/\s+/g, '_');
+    // Replace all occurrences of the word with the variable placeholder
+    const re = new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'g');
+    newBody = newBody.replace(re, `{{${varName}}}`);
+  });
+
+  console.log('Transformed Body:', newBody);
+
+  // Update the prompt
+  const idx = prompts.findIndex(p => p.id === pendingTemplatePrompt.id);
+  if (idx !== -1) {
+    prompts[idx].body = newBody;
+    saveToLocalStorage();
+
+    // Sync to cloud if applicable
+    if (prompts[idx].cloud_id) {
+      savePromptToSupabase(prompts[idx]);
+    }
+
+    renderPrompts();
+    showToast('Template created! Fill in the blanks now.');
+
+    // Now show the fill modal
+    hideVariableSelectionModal();
+    const vars = extractVariables(newBody);
+    if (vars.length > 0) {
+      showVariableModal(prompts[idx], vars);
+    }
+  }
+}
+
+// Event Listeners for Template Flow
+if (templateChoiceYes) {
+  templateChoiceYes.onclick = () => {
+    if (pendingTemplatePrompt) {
+      showVariableSelectionModal(pendingTemplatePrompt);
+    }
+    hideTemplateChoiceModal();
+  };
+}
+
+if (templateChoiceNo) {
+  templateChoiceNo.onclick = () => {
+    if (pendingTemplatePrompt) {
+      doCopy(pendingTemplatePrompt.body, pendingTemplatePrompt.id);
+    }
+    hideTemplateChoiceModal();
+  };
+}
+
+if (closeVarSelectModalBtn) {
+  closeVarSelectModalBtn.onclick = hideVariableSelectionModal;
+}
+
+if (confirmVarSelectBtn) {
+  console.log("Attaching confirmVarSelectBtn listener");
+  confirmVarSelectBtn.onclick = confirmVariableSelection;
+} else {
+  console.error("confirmVarSelectBtn not found in DOM");
+}
+
+// Close modals on overlay click
+if (templateChoiceOverlay) {
+  templateChoiceOverlay.onclick = (e) => {
+    if (e.target === templateChoiceOverlay) {
+      hideTemplateChoiceModal();
+    }
+  };
+}
+
+if (varSelectOverlay) {
+  varSelectOverlay.onclick = (e) => {
+    if (e.target === varSelectOverlay) {
+      hideVariableSelectionModal();
+    }
+  };
+}
 
 function doCopy(text, id) {
   navigator.clipboard.writeText(text);
@@ -1578,67 +1811,9 @@ async function updateUsageCount(id) {
   }
 }
 
-function copyPrompt_OLD(id) {
-  // Safeguard: Prevent incrementing usage twice within 2 seconds
-  const now = Date.now();
-  const lastCopyTime = recentCopies.get(id) || 0;
-  if (now - lastCopyTime < 2000) {
-    return; // Already counted recently, skip increment
-  }
 
-  // Mark this copy time
-  recentCopies.set(id, now);
 
-  // Initialize usage fields if they don't exist
-  if (typeof p.total_usage !== 'number') {
-    p.total_usage = 0;
-  }
 
-  // Increment usage count
-  p.total_usage += 1;
-  p.last_used_at = new Date().toISOString();
-
-  // Save locally
-  saveToLocalStorage();
-  renderPrompts(); // Re-render to show updated usage count
-
-  // Sync to cloud if user is logged in or has cloud_id
-  if (p.cloud_id && supabase) {
-    syncUsageToCloud(p);
-  } else {
-    savePromptToSupabase(p);
-  }
-}
-
-async function syncUsageToCloud(prompt) {
-  if (!supabase) return;
-
-  try {
-    let query = supabase
-      .from('prompt_saves')
-      .update({
-        total_usage: prompt.total_usage,
-        last_used_at: prompt.last_used_at
-      })
-      .eq('id', prompt.cloud_id);
-
-    // RLS: Add correct filter
-    if (user_session) {
-      query = query.eq('user_id', user_session.user.id);
-    } else {
-      query = query.eq('device_id', device_id);
-    }
-
-    const { error } = await query;
-    if (error) {
-      console.error("Cloud usage update failed:", error);
-      queueOffline(prompt);
-    }
-  } catch (err) {
-    console.error('Usage sync exception:', err);
-    queueOffline(prompt);
-  }
-}
 
 function openModal() {
   document.getElementById('promptId').value = '';
@@ -1850,8 +2025,12 @@ class TagManager {
     // 2. Load from DB (if connected)
     if (supabase) {
       try {
-        const { data } = await supabase.from('tags').select('name').limit(100);
-        if (data) data.forEach(Row => this.savedTags.add(Row.name.toLowerCase()));
+        const { data, error } = await supabase.from('tags').select('name').limit(100);
+        if (error) {
+          // Silent fail for missing table (42P01) or standard REST errors
+          return;
+        }
+        if (data) data.forEach(row => this.savedTags.add(row.name.toLowerCase()));
       } catch (err) { /* silent fail */ }
     }
   }

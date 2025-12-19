@@ -24,7 +24,7 @@
                         <line x1="9" y1="15" x2="15" y2="15"></line>
                     </svg>
                 </div>
-                <h2>Welcome to Prompitz</h2>
+                <h2>Welcome to Prompit</h2>
                 <p>Sign in to sync your prompts across all your devices.</p>
             </div>
 
@@ -262,17 +262,19 @@
                     <input type="text" id="title" name="title" autocomplete="off" placeholder="Enter title (optional)">
                 </div>
                 <div class="form-group">
-                    <label>Folder (Optional)</label>
+                    <label for="folderDropdownTrigger">Folder (Optional)</label>
                     <div class="custom-dropdown" id="folderDropdown" style="width: 100%;">
-                        <div class="dropdown-selected" tabindex="0">No Folder</div>
+                        <button type="button" class="dropdown-selected" id="folderDropdownTrigger"
+                            aria-haspopup="listbox" aria-expanded="false">No Folder</button>
                         <div class="dropdown-options"></div>
                     </div>
                     <input type="hidden" id="folder" name="folder">
                 </div>
                 <div class="form-group">
-                    <label for="category">Category</label>
+                    <label for="modalCategoryDropdownTrigger">Category</label>
                     <div class="custom-dropdown" id="modalCategoryDropdown" style="width: 100%;">
-                        <div class="dropdown-selected" tabindex="0">Select Category</div>
+                        <button type="button" class="dropdown-selected" id="modalCategoryDropdownTrigger"
+                            aria-haspopup="listbox" aria-expanded="false">Select Category</button>
                         <div class="dropdown-options">
                             <!-- Options populated by JS -->
                         </div>
@@ -295,8 +297,8 @@
                     <!-- Hidden input to store CSV for form submission -->
                     <input type="hidden" id="tags" name="tags">
                 </div>
-                <div class="form-group">
-                    <label>Storage Location</label>
+                <fieldset class="form-group border-0 p-0 m-0">
+                    <legend class="label-style">Storage Location</legend>
                     <div class="storage-selection">
                         <label class="storage-option">
                             <input type="radio" name="storageType" value="local">
@@ -313,7 +315,7 @@
                             </span>
                         </label>
                     </div>
-                </div>
+                </fieldset>
                 <div class="form-actions">
                     <button type="button" id="autoFillBtn" class="secondary-btn"
                         title="Auto-fill metadata from body text">✨ Auto-Fill</button>
@@ -335,12 +337,42 @@
                 <!-- Fields injected by JS -->
             </div>
             <div class="form-actions" style="margin-top: 24px;">
-                <button id="copyFinalBtn" class="primary-btn">
+                <button id="copyFinalBtn" class="primary-btn copy-final-btn">
                     <span class="btn-text">Copy Final Prompt</span>
                 </button>
             </div>
         </div>
     </div>
+
+    <!-- Template Choice Modal (Toast-like) -->
+    <div id="templateChoiceOverlay" class="template-choice-overlay hidden">
+        <div class="template-choice-card glass-panel">
+            <p>Use this prompt as a <strong>reusable template</strong>?</p>
+            <div class="template-choice-actions">
+                <button id="templateChoiceYes" class="primary-btn small-btn">Yes, create template</button>
+                <button id="templateChoiceNo" class="secondary-btn small-btn">No, just copy</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Variable Selection Modal -->
+    <div id="varSelectOverlay" class="modal-overlay hidden">
+        <div class="modal glass-panel var-select-modal">
+            <div class="modal-header">
+                <h2>Select Variables</h2>
+                <button id="closeVarSelectModal" class="close-btn">&times;</button>
+            </div>
+            <p class="modal-subtitle">Click on words to mark them as variables. They will become fillable placeholders.
+            </p>
+            <div id="varSelectPreview" class="var-select-preview">
+                <!-- Words injected by JS -->
+            </div>
+            <div class="form-actions" style="margin-top: 24px;">
+                <button id="confirmVarSelectBtn" class="primary-btn">Confirm & Save Template</button>
+            </div>
+        </div>
+    </div>
+
 
     <!-- Toast Notification -->
     <div id="toast" class="toast hidden">
@@ -406,7 +438,7 @@
     <!-- Your cloud config -->
     <script src="./cloudConfig.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="app.js?v=7"></script>
+    <script src="app.js?v=8"></script>
 
 </body>
 

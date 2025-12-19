@@ -171,6 +171,13 @@ body.dark-mode .search-box input:focus {
     text-overflow: ellipsis;
     max-width: clamp(100px, 15vw, 160px);
     vertical-align: middle;
+    text-align: left;
+}
+
+.custom-dropdown button.dropdown-selected {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 100%;
 }
 
 .dropdown-selected::after {
@@ -821,11 +828,18 @@ body.dark-mode .modal {
     margin-bottom: 15px;
 }
 
-.form-group label {
+.form-group label,
+.label-style {
     display: block;
     margin-bottom: 5px;
     font-weight: 600;
     font-size: 0.9rem;
+}
+
+fieldset.form-group {
+    border: none;
+    padding: 0;
+    margin: 0 0 15px 0;
 }
 
 .form-group input,
@@ -1983,66 +1997,245 @@ body.dark-mode .storage-option input[type="radio"]:checked+.storage-box {
     border-color: var(--primary-color);
     box-shadow: 0 4px 12px rgba(107, 163, 255, 0.2);
 }
-/* Variable Fill Modal */
+
+/* Variable Fill Modal (The Template Space) */
 .modal-subtitle {
     color: var(--text-secondary);
-    font-size: 0.9rem;
+    font-size: 0.95rem;
     margin-bottom: 24px;
-    opacity: 0.8;
+    line-height: 1.5;
 }
 
 .variable-fields {
     display: flex;
     flex-direction: column;
-    gap: 20px;
-    max-height: 40vh;
+    gap: 24px;
+    max-height: 50vh;
     overflow-y: auto;
-    padding-right: 8px;
+    padding-right: 12px;
+    padding-bottom: 8px;
+}
+
+.variable-fields::-webkit-scrollbar {
+    width: 4px;
+}
+
+.variable-fields::-webkit-scrollbar-thumb {
+    background: rgba(var(--primary-rgb), 0.2);
+    border-radius: 10px;
 }
 
 .variable-field {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 10px;
 }
 
 .variable-field label {
-    font-size: 0.8rem;
+    font-size: 0.75rem;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--primary-color);
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+    opacity: 0.7;
 }
 
 .variable-field input {
-    padding: 12px 16px;
-    border-radius: var(--border-radius-sm);
-    border: 1px solid rgba(0, 0, 0, 0.1);
-    background: rgba(0, 0, 0, 0.02);
+    padding: 14px 18px;
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+    background: rgba(255, 255, 255, 0.02);
     font-size: 1rem;
-    transition: all 0.2s;
+    color: var(--text-primary);
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    width: 100%;
+    outline: none;
+}
+
+.variable-field input:hover {
+    border-color: rgba(var(--primary-rgb), 0.4);
 }
 
 .variable-field input:focus {
     background: #fff;
     border-color: var(--primary-color);
-    box-shadow: 0 0 0 4px rgba(74, 144, 226, 0.1);
+    box-shadow: 0 0 0 4px rgba(var(--primary-rgb), 0.08);
 }
 
 body.dark-mode .variable-field input {
-    background: rgba(255, 255, 255, 0.05);
+    background: rgba(255, 255, 255, 0.03);
     border-color: rgba(255, 255, 255, 0.1);
 }
 
 body.dark-mode .variable-field input:focus {
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.06);
+    border-color: var(--primary-color);
 }
 
-/* Scrollbar for variable fields */
-.variable-fields::-webkit-scrollbar {
-    width: 4px;
+.copy-final-btn {
+    margin-top: 10px;
+    height: 52px;
+    font-size: 1rem;
+    letter-spacing: 0.01em;
 }
-.variable-fields::-webkit-scrollbar-thumb {
-    background: var(--primary-color);
+
+/* ============================================
+   Template Choice Modal (Bottom Toast-like)
+   ============================================ */
+.template-choice-overlay {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 1100;
+    display: flex;
+    justify-content: center;
+    padding: 20px;
+    animation: slideUpFadeIn 0.3s ease-out;
+}
+
+.template-choice-overlay.hidden {
+    display: none;
+}
+
+@keyframes slideUpFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.template-choice-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    padding: 20px 30px;
+    border-radius: 16px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+    max-width: 400px;
+    text-align: center;
+}
+
+.template-choice-card p {
+    margin: 0;
+    font-size: 1rem;
+    color: var(--text-color);
+}
+
+.template-choice-card strong {
+    color: var(--primary-color);
+}
+
+.template-choice-actions {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+.small-btn {
+    padding: 10px 18px;
+    font-size: 0.9rem;
     border-radius: 10px;
+}
+
+/* ============================================
+   Variable Selection Modal
+   ============================================ */
+/* ============================================
+   Variable Selection Modal
+   ============================================ */
+.var-select-modal {
+    max-width: 650px;
+}
+
+.var-select-preview {
+    background: rgba(15, 15, 20, 0.05);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    border-radius: 16px;
+    padding: 24px;
+    max-height: 400px;
+    overflow-y: auto;
+    line-height: 2.2;
+    font-size: 1.1rem;
+    color: var(--text-color);
+    box-shadow: inset 0 4px 20px rgba(0, 0, 0, 0.05);
+    transition: all 0.3s ease;
+}
+
+body.dark-mode .var-select-preview {
+    background: rgba(0, 0, 0, 0.3);
+    border-color: rgba(255, 255, 255, 0.1);
+    box-shadow: inset 0 4px 20px rgba(0, 0, 0, 0.4);
+}
+
+.var-select-preview .word-token {
+    display: inline-block;
+    padding: 4px 10px;
+    margin: 4px 2px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    background: transparent;
+    border: 1px solid transparent;
+    position: relative;
+    font-weight: 500;
+}
+
+.var-select-preview .word-token:hover {
+    background: rgba(var(--primary-rgb), 0.1);
+    transform: translateY(-1px);
+}
+
+/* Vibrant Blue Selection (Glow Effect) */
+.var-select-preview .word-token.selected {
+    background: rgba(59, 130, 246, 0.2);
+    border-color: #3b82f6;
+    color: var(--primary-color);
+    font-weight: 700;
+    box-shadow: 0 0 12px rgba(59, 130, 246, 0.3);
+}
+
+body.dark-mode .var-select-preview .word-token.selected {
+    background: rgba(59, 130, 246, 0.25);
+    color: #60a5fa;
+    /* Brighter blue in dark mode */
+    box-shadow: 0 0 15px rgba(59, 130, 246, 0.5), inset 0 0 10px rgba(59, 130, 246, 0.1);
+    text-shadow: 0 0 8px rgba(59, 130, 246, 0.4);
+}
+
+/* Faint Yellow Suggestion */
+.var-select-preview .word-token.suggested {
+    border: 1px dashed rgba(255, 193, 7, 0.5);
+    background: rgba(255, 193, 7, 0.05);
+}
+
+/* Ensure selected state overrides suggested state aesthetics */
+.var-select-preview .word-token.suggested.selected {
+    border-style: solid;
+    /* other properties inherited from .selected */
+}
+
+.var-select-preview .word-token.suggested:hover {
+    background: rgba(255, 193, 7, 0.15);
+    border-color: rgba(255, 193, 7, 0.8);
+}
+
+.var-select-preview .punctuation {
+    display: inline;
+    margin: 0;
+    cursor: default;
+}
+
+.var-select-preview .newline {
+    display: block;
+    height: 8px;
 }
