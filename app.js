@@ -719,6 +719,91 @@ function updateCategoryDropdownUI(dropdownElement, value) {
   document.getElementById('category').value = value;
 }
 
+
+// Custom Lexicon for Accuracy Booster
+const LEXICON_BOOST = {
+  // Names
+  'aarav': 'Person', 'amara': 'Person', 'ankita': 'Person', 'chen': 'Person', 'diego': 'Person',
+  'hiroshi': 'Person', 'kenji': 'Person', 'mateo': 'Person', 'priya': 'Person', 'santiago': 'Person',
+  'zara': 'Person', 'liam': 'Person', 'sofia': 'Person', 'hans': 'Person', 'fatima': 'Person',
+  // Orgs
+  'spacex': 'Organization', 'openai': 'Organization', 'microsoft': 'Organization', 'apple': 'Organization',
+  'google': 'Organization', 'tesla': 'Organization', 'facebook': 'Organization', 'meta': 'Organization'
+};
+
+const STOPWORDS_LITE = new Set([
+  'a', 'an', 'the', 'and', 'or', 'but', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+  'in', 'on', 'at', 'to', 'for', 'with', 'by', 'about', 'against', 'between', 'into', 'through',
+  'during', 'before', 'after', 'above', 'below', 'from', 'up', 'down', 'of', 'off', 'over', 'under',
+  'again', 'further', 'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'any',
+  'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own',
+  'same', 'so', 'than', 'too', 'very', 's', 't', 'can', 'will', 'just', 'don', 'should', 'now',
+  'i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you', 'your', 'yours', 'yourself',
+  'it', 'its', 'itself', 'he', 'him', 'his', 'himself', 'she', 'her', 'hers', 'herself'
+]);
+
+function autoConvertVariables(text) {
+  if (!text) return text;
+
+  // 1. Convert [...] and <...> (Explicit markers)
+  let newText = text.replace(/\[([^\]]+)\]/g, '{{$1}}');
+  newText = newText.replace(/<([^>]+)>/g, '{{$1}}');
+
+  if (typeof nlp === 'undefined') return newText;
+
+  try {
+    // Apply Booster Lexicon
+    const doc = nlp(newText, LEXICON_BOOST);
+
+    // 2. NLP Detect Names, Places, Orgs, Dates
+    const matches = [
+      { list: doc.people(), cat: '{{name}}', min: 2 },
+      { list: doc.places(), cat: '{{location}}', min: 2 },
+      { list: doc.organizations(), cat: '{{organization}}', min: 3 },
+      { list: doc.dates(), cat: '{{date}}', min: 4 }
+    ];
+
+    matches.forEach(m => {
+      m.list.forEach(match => {
+        const val = match.text('normal');
+        if (val.length >= m.min) {
+          const re = new RegExp(`\\b${val.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}\\b`, 'gi');
+          newText = newText.replace(re, m.cat);
+        }
+      });
+    });
+
+    // 3. Smart Capitalization Fallback (Catch missed entities)
+    // Splits by spaces/punctuation to find capitalized words
+    const words = newText.split(/(\s+|[.,!?;:"'()[\]{}])/g);
+    let result = [];
+
+    words.forEach((word, i) => {
+      // If it's a word (not space/punct), starts with uppercase, and isn't a common stopword
+      const cleanWord = word.replace(/[.,!?;:"'()[\]{}]/g, '');
+      if (cleanWord.length > 2 && /^[A-Z]/.test(cleanWord)) {
+        const lower = cleanWord.toLowerCase();
+
+        // Safety: Check if it's NOT at the start of a sentence-like segment
+        const isStart = (i === 0 || words[i - 1].includes('.') || words[i - 1].includes('\n'));
+        const isStopword = STOPWORDS_LITE.has(lower);
+
+        if (!isStopword && !isStart) {
+          result.push('{{name}}'); // Fallback to generic name/entity
+          return;
+        }
+      }
+      result.push(word);
+    });
+
+    newText = result.join('');
+    return newText;
+  } catch (err) {
+    console.error("NLP Error:", err);
+    return newText;
+  }
+}
+
 // ---------- CRUD Logic ----------
 
 async function handleFormSubmit(e) {
@@ -726,12 +811,15 @@ async function handleFormSubmit(e) {
   const id = document.getElementById('promptId').value;
   const title = document.getElementById('title').value;
   const category = document.getElementById('category').value || 'other';
-  const body = document.getElementById('body').value;
+  let body = document.getElementById('body').value;
+
+  // VERBATIM SAVE (Conversion moved to Copy)
+
   const tags = document.getElementById('tags').value.split(',').map(t => t.trim()).filter(Boolean);
   const storageType = document.querySelector('input[name="storageType"]:checked')?.value || 'cloud';
 
   const promptData = {
-    id: id || crypto.randomUUID(), // Use UUID for local ID too
+    id: id || crypto.randomUUID(),
     title: title || autoGenerateTitle(body),
     category,
     body,
@@ -753,7 +841,7 @@ async function handleFormSubmit(e) {
   saveToLocalStorage();
   renderPrompts();
   closeModal();
-  showToast('Prompt saved!');
+  showToast('Prompt saved and variables detected!');
 
   if (storageType === 'cloud') {
     await savePromptToSupabase(promptData);
@@ -764,8 +852,10 @@ async function handleFormSubmit(e) {
 function handleQuickAdd() {
   const quickPaste = document.getElementById('quickPaste');
   if (!quickPaste) return;
-  const text = quickPaste.value.trim();
+  let text = quickPaste.value.trim();
   if (!text) return;
+
+  // VERBATIM SAVE (Conversion moved to Copy)
 
   const analysis = analyzePrompt(text);
   const newPrompt = {
@@ -783,8 +873,7 @@ function handleQuickAdd() {
   saveToLocalStorage();
   renderPrompts();
   quickPaste.value = '';
-  showToast('Saved locally!');
-  // skip savePromptToSupabase(newPrompt) for local default
+  showToast('Saved locally with auto-variables!');
   if (window.tagManager) window.tagManager.syncTagsToCloud(newPrompt.tags);
 }
 
@@ -1514,14 +1603,15 @@ function copyPrompt(id) {
   const p = prompts.find(x => x.id === id);
   if (!p) return;
 
-  const vars = extractVariables(p.body);
-  if (vars.length > 0) {
-    showVariableModal(p, vars);
-    return;
-  }
+  const templatedBody = autoConvertVariables(p.body);
 
-  // Normal copy -> Propose Template creation
-  showTemplateChoiceModal(p);
+  // Direct copy of the templated version (without updating the library or UI)
+  if (templatedBody !== p.body) {
+    showToast('Converted and copied as template!');
+    doCopy(templatedBody, id, true);
+  } else {
+    doCopy(templatedBody, id);
+  }
 }
 
 function showVariableModal(prompt, vars) {
@@ -1610,15 +1700,7 @@ function suggestVariables(text) {
   return suggestions;
 }
 
-function showTemplateChoiceModal(prompt) {
-  pendingTemplatePrompt = prompt;
-  templateChoiceOverlay.classList.remove('hidden');
-}
-
-function hideTemplateChoiceModal() {
-  templateChoiceOverlay.classList.add('hidden');
-  pendingTemplatePrompt = null;
-}
+// ========== NEW TEMPLATE FLOW ==========
 
 function showVariableSelectionModal(prompt) {
   pendingTemplatePrompt = prompt;
@@ -1728,23 +1810,7 @@ function confirmVariableSelection() {
 }
 
 // Event Listeners for Template Flow
-if (templateChoiceYes) {
-  templateChoiceYes.onclick = () => {
-    if (pendingTemplatePrompt) {
-      showVariableSelectionModal(pendingTemplatePrompt);
-    }
-    hideTemplateChoiceModal();
-  };
-}
 
-if (templateChoiceNo) {
-  templateChoiceNo.onclick = () => {
-    if (pendingTemplatePrompt) {
-      doCopy(pendingTemplatePrompt.body, pendingTemplatePrompt.id);
-    }
-    hideTemplateChoiceModal();
-  };
-}
 
 if (closeVarSelectModalBtn) {
   closeVarSelectModalBtn.onclick = hideVariableSelectionModal;
@@ -1774,9 +1840,9 @@ if (varSelectOverlay) {
   };
 }
 
-function doCopy(text, id) {
+function doCopy(text, id, silent = false) {
   navigator.clipboard.writeText(text);
-  showToast('Copied to clipboard!');
+  if (!silent) showToast('Copied to clipboard!');
 
   // Visual feedback
   const card = document.querySelector(`[data-id="${id}"]`);
