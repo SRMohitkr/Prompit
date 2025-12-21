@@ -133,6 +133,9 @@ end $$;
 */
 
 // ---------- Init & Globals ----------
+if (typeof nlp !== 'undefined' && typeof nlpDates !== 'undefined') {
+  nlp.extend(nlpDates);
+}
 const SUPABASE_URL = window.SUPABASE_URL;
 const SUPABASE_KEY = window.SUPABASE_ANON_KEY;
 let supabase = null;
@@ -757,10 +760,10 @@ function autoConvertVariables(text) {
 
     // 2. NLP Detect Names, Places, Orgs, Dates
     const matches = [
-      { list: doc.people(), cat: '{{name}}', min: 2 },
-      { list: doc.places(), cat: '{{location}}', min: 2 },
-      { list: doc.organizations(), cat: '{{organization}}', min: 3 },
-      { list: doc.dates(), cat: '{{date}}', min: 4 }
+      { list: (doc.people && typeof doc.people === 'function') ? doc.people() : doc.match('#Person'), cat: '{{name}}', min: 2 },
+      { list: (doc.places && typeof doc.places === 'function') ? doc.places() : doc.match('#Place'), cat: '{{location}}', min: 2 },
+      { list: (doc.organizations && typeof doc.organizations === 'function') ? doc.organizations() : doc.match('#Organization'), cat: '{{organization}}', min: 3 },
+      { list: (doc.dates && typeof doc.dates === 'function') ? doc.dates() : doc.match('#Date'), cat: '{{date}}', min: 4 }
     ];
 
     matches.forEach(m => {
@@ -818,6 +821,12 @@ async function handleFormSubmit(e) {
   const tags = document.getElementById('tags').value.split(',').map(t => t.trim()).filter(Boolean);
   const storageType = document.querySelector('input[name="storageType"]:checked')?.value || 'cloud';
 
+  // Robustly find existing prompt, handling String/Number ID mismatch
+  let existingPrompt = null;
+  if (id) {
+    existingPrompt = prompts.find(p => String(p.id) === String(id));
+  }
+
   const promptData = {
     id: id || crypto.randomUUID(),
     title: title || autoGenerateTitle(body),
@@ -825,15 +834,21 @@ async function handleFormSubmit(e) {
     body,
     tags,
     date: new Date().toISOString(),
-    favorite: id ? (prompts.find(p => p.id === id)?.favorite || false) : false,
-    cloud_id: id ? (prompts.find(p => p.id === id)?.cloud_id) : undefined,
+    favorite: existingPrompt ? existingPrompt.favorite : false,
+    cloud_id: existingPrompt ? existingPrompt.cloud_id : undefined,
     folder_id: document.getElementById('folder') ? (document.getElementById('folder').value || null) : null,
     storage: storageType
   };
 
   if (id) {
-    const index = prompts.findIndex(p => p.id === id);
-    if (index > -1) prompts[index] = { ...prompts[index], ...promptData };
+    const index = prompts.findIndex(p => String(p.id) === String(id));
+    if (index > -1) {
+      // Merge updates while preserving other fields
+      prompts[index] = { ...prompts[index], ...promptData };
+    } else {
+      // Fallback if ID exists in form but not found in array (should be rare)
+      prompts.unshift(promptData);
+    }
   } else {
     prompts.unshift(promptData);
   }
@@ -880,10 +895,10 @@ function handleQuickAdd() {
 async function deletePrompt(id) {
   if (!confirm("Delete this prompt?")) return;
 
-  const prompt = prompts.find(p => p.id === id);
+  const prompt = prompts.find(p => String(p.id) === String(id));
   if (!prompt) return;
 
-  prompts = prompts.filter(p => p.id !== id);
+  prompts = prompts.filter(p => String(p.id) !== String(id));
   saveToLocalStorage();
   renderPrompts();
   showToast("Deleted");
@@ -904,7 +919,7 @@ async function deletePrompt(id) {
 }
 
 async function toggleFavorite(id) {
-  const p = prompts.find(x => x.id === id);
+  const p = prompts.find(x => String(x.id) === String(id));
   if (!p) return;
 
   p.favorite = !p.favorite;
@@ -1036,7 +1051,6 @@ async function loadPromptsFromSupabaseAndMerge() {
         tags: row.tags ? row.tags.split(',') : [],
         favorite: row.favorite,
         category: row.category,
-        date: row.created_at,
         date: row.created_at,
         device_id: row.device_id,
         user_id: row.user_id,
@@ -1424,7 +1438,7 @@ This is your personal prompt library — built to help you think, create, and mo
     if (rank[a.matchType] !== rank[b.matchType]) return rank[a.matchType] - rank[b.matchType];
 
     // Priority 3: Newer first
-    return (b.prompt.created_at || 0) > (a.prompt.created_at || 0) ? 1 : -1;
+    return (new Date(b.prompt.date || 0)) - (new Date(a.prompt.date || 0));
   });
 
   // If no query, show all prompts (with favorites pinned at top)
@@ -1436,7 +1450,7 @@ This is your personal prompt library — built to help you think, create, and mo
         // Favorites always appear first, then by creation date
         if (a.prompt.favorite && !b.prompt.favorite) return -1;
         if (!a.prompt.favorite && b.prompt.favorite) return 1;
-        return (b.prompt.created_at || 0) > (a.prompt.created_at || 0) ? 1 : -1;
+        return (new Date(b.prompt.date || 0)) - (new Date(a.prompt.date || 0));
       });
   }
 
@@ -1463,8 +1477,13 @@ This is your personal prompt library — built to help you think, create, and mo
     if (a.prompt.favorite && !b.prompt.favorite) return -1;
     if (!a.prompt.favorite && b.prompt.favorite) return 1;
     // Then sort by creation date (newer first)
-    return (b.prompt.created_at || 0) > (a.prompt.created_at || 0) ? 1 : -1;
+    return (new Date(b.prompt.date || 0)) - (new Date(a.prompt.date || 0));
   });
+
+  // Identify absolute newest prompt
+  const newestId = prompts.length > 0
+    ? [...prompts].sort((a, b) => new Date(b.date) - new Date(a.date))[0].id
+    : null;
 
   results.forEach((res, index) => {
     const p = res.prompt;
@@ -1516,7 +1535,7 @@ This is your personal prompt library — built to help you think, create, and mo
       <div class="card-header">
         <div class="card-title">
             ${titleHtml}
-            ${(new Date() - new Date(p.date || 0)) < 86400000 ? '<span class="badge-new">New</span>' : ''}
+            ${p.id === newestId ? '<span class="badge-new">New</span>' : ''}
         </div>
         <div class="card-actions">
            <button class="icon-btn fav-btn ${p.favorite ? 'active' : ''}" onclick="toggleFavorite('${p.id}')" title="Favorite">${favIcon}</button>
@@ -1528,9 +1547,12 @@ This is your personal prompt library — built to help you think, create, and mo
       <div class="category-badge" style="margin-bottom:8px;">${escapeHtml(p.category) || 'other'}</div>
       <div class="card-body">${snippetHtml}</div>
       <div class="card-footer">
-         <div class="tags">
-            ${tagsHtml}
-         </div>
+          <div class="tags-row">
+            <span class="age-text">${timeAgo(p.date)}</span>
+            <div class="tags">
+                ${tagsHtml}
+            </div>
+          </div>
          ${usageText ? `<div class="usage-text">${usageText}</div>` : ''}
       </div>
     `;
@@ -1559,6 +1581,24 @@ function analyzePrompt(text) {
     category: cat,
     isLikelyFavorite: false
   };
+}
+
+function timeAgo(date) {
+  if (!date) return 'Recently';
+  const seconds = Math.floor((new Date() - new Date(date)) / 1000);
+  if (seconds < 10) return 'just now';
+  const intervals = [
+    { s: 31536000, l: 'year' },
+    { s: 2592000, l: 'month' },
+    { s: 86400, l: 'day' },
+    { s: 3600, l: 'hour' },
+    { s: 60, l: 'minute' }
+  ];
+  for (const i of intervals) {
+    const count = Math.floor(seconds / i.s);
+    if (count >= 1) return `${count} ${i.l}${count > 1 ? 's' : ''} ago`;
+  }
+  return seconds + 's ago';
 }
 
 function saveToLocalStorage() {
@@ -1600,7 +1640,7 @@ function extractVariables(text) {
 let activeVariablePrompt = null;
 
 function copyPrompt(id) {
-  const p = prompts.find(x => x.id === id);
+  const p = prompts.find(x => String(x.id) === String(id));
   if (!p) return;
 
   const templatedBody = autoConvertVariables(p.body);
@@ -1903,7 +1943,7 @@ function openModal() {
 }
 
 function openEditModal(id) {
-  const p = prompts.find(x => x.id === id);
+  const p = prompts.find(x => String(x.id) === String(id));
   if (!p) return;
   document.getElementById('promptId').value = p.id;
   document.getElementById('title').value = p.title;

@@ -59,7 +59,7 @@ body {
 }
 
 .app-container {
-    max-width: 1200px;
+    max-width: 1320px;
     margin: 0 auto;
     padding-bottom: 50px;
     width: 100%;
@@ -633,6 +633,28 @@ body.dark-mode .card-body {
     gap: 12px;
 }
 
+.tags-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.age-text {
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    opacity: 0.8;
+    white-space: nowrap;
+    background: rgba(0, 0, 0, 0.04);
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-weight: 500;
+}
+
+body.dark-mode .age-text {
+    background: rgba(255, 255, 255, 0.06);
+}
+
 .tags {
     display: flex;
     gap: 5px;
@@ -946,7 +968,7 @@ body.dark-mode .secondary-btn:hover {
 }
 
 .hidden {
-    display: none;
+    display: none !important;
     /* Helper for non-animated hides if needed, though overlay uses opacity */
 }
 
