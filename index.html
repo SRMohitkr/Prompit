@@ -327,6 +327,22 @@
         </div>
     </div>
 
+    <!-- Template Choice Modal -->
+    <div id="templateChoiceOverlay" class="modal-overlay hidden">
+        <div class="modal glass-panel">
+            <div class="modal-header">
+                <h2>Create Template?</h2>
+                <button onclick="document.getElementById('templateChoiceOverlay').classList.add('hidden')"
+                    class="close-btn">&times;</button>
+            </div>
+            <p class="modal-subtitle">Do you want to turn this prompt into a template by selecting variables?</p>
+            <div class="form-actions" style="margin-top: 24px;">
+                <button id="templateChoiceNo" class="secondary-btn">No, Save as Text</button>
+                <button id="templateChoiceYes" class="primary-btn">Yes, Select Variables</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Variable Fill Modal -->
     <div id="variableModalOverlay" class="modal-overlay hidden">
         <div class="modal glass-panel">

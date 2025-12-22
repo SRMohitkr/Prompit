@@ -45,6 +45,10 @@ begin
   if not exists (select 1 from information_schema.columns where table_name = 'prompt_saves' and column_name = 'last_used_at') then
      alter table public.prompt_saves add column last_used_at timestamp with time zone;
   end if;
+
+  if not exists (select 1 from information_schema.columns where table_name = 'prompt_saves' and column_name = 'updated_at') then
+     alter table public.prompt_saves add column updated_at timestamp with time zone default now();
+  end if;
 end $$;
 
 -- 3. Create device_metadata table
@@ -136,9 +140,13 @@ end $$;
 if (typeof nlp !== 'undefined' && typeof nlpDates !== 'undefined') {
   nlp.extend(nlpDates);
 }
+// Globals for Template Flow
+let lastPendingPrompt = null;
+let selectedVariableWords = new Set();
+
 const SUPABASE_URL = window.SUPABASE_URL;
 const SUPABASE_KEY = window.SUPABASE_ANON_KEY;
-let supabase = null;
+let supabaseClient = null;
 let device_id = localStorage.getItem('device_id');
 let user_session = null;
 
@@ -160,15 +168,23 @@ try { prompts = JSON.parse(localStorage.getItem('prompts') || '[]'); } catch (e)
 let offlineQueue = [];
 try { offlineQueue = JSON.parse(localStorage.getItem('offlineQueue') || '[]'); } catch (e) { console.error('Corrupt Queue', e); localStorage.removeItem('offlineQueue'); }
 
+let offlineDeletes = [];
+try { offlineDeletes = JSON.parse(localStorage.getItem('offlineDeletes') || '[]'); } catch (e) { console.error('Corrupt Delete Queue', e); localStorage.removeItem('offlineDeletes'); }
+
 let folders = [];
 try { folders = JSON.parse(localStorage.getItem('folders') || '[]'); } catch (e) { console.error('Resetting Folders', e); localStorage.removeItem('folders'); }
 let activeFolderId = null; // null = 'All Prompts'
 
-console.log("App Start: Parsed Data", { prompts_len: prompts.length, offlineQueue_len: offlineQueue.length, folders_len: folders.length });
+console.log("App Start: Parsed Data", {
+  prompts_len: prompts.length,
+  offlineQueue_len: offlineQueue.length,
+  offlineDeletes_len: offlineDeletes.length,
+  folders_len: folders.length
+});
 
 
 if (SUPABASE_URL && SUPABASE_KEY) {
-  supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+  supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
     global: { headers: { 'x-device-id': device_id } }
   });
 } else {
@@ -229,114 +245,75 @@ const loginOption = document.getElementById('loginOption');
 let currentFilter = 'all';
 
 // ---------- App Start ----------
-(async function initApp() {
+async function initApp() {
   try {
-    console.log("initApp running");
+    console.log("initApp: Starting initialization...");
     applyTheme();
-    setupEventListeners();
     setupAuthListeners();
+    setupEventListeners();
     renderCategories();
     renderFolderStream();
-    renderPrompts(); // Optimistic Render: Show cached data IMMEDIATELY before waiting for Auth/Supabase
-    if (supabase) {
-      supabase.auth.onAuthStateChange(async (event, session) => {
-        // Handle both explicit SIGNED_IN and page load INITIAL_SESSION
-        if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && session) {
 
-          // --- FIX: Trust the session ---
-          // We do NOT sign out if intent is missing. 
-          // We only check it to clean it up or for metrics if needed.
-          const intent = localStorage.getItem('user_intent_login');
-          if (intent) {
-            console.log('Completing login flow...');
-            localStorage.removeItem('user_intent_login'); // Cleanup
-          } else {
-            console.log('Session restored (Background/Guest to User).');
-          }
-          // -------------------------------
+    // Check initial session
+    if (supabaseClient) {
+      const { data: { session }, error } = await supabaseClient.auth.getSession();
+      if (error) console.error("Session fetch error:", error);
+      user_session = session;
 
-          user_session = session;
-          hideAuthOverlay();
-          renderUserProfile(session.user);
+      if (session) {
+        console.log("initApp: Session found for", session.user.email);
+        updateAuthUI();
+        renderUserProfile(session.user);
+        await syncData();
+      } else {
+        console.log("initApp: No session, rendering guest prompts.");
+        renderPrompts();
+      }
+
+      // Listen for auth changes (Magic Link redirects, logouts, etc.)
+      supabaseClient.auth.onAuthStateChange(async (event, session) => {
+        console.log("Auth State Changed:", event, session?.user?.email);
+        user_session = session;
+        if (event === 'SIGNED_IN' && session) {
           updateAuthUI();
-
-          // Show banner if session exists (and not dismissed previously if we had that logic)
-          const banner = document.getElementById('welcome-banner');
-          if (banner) banner.classList.remove('hidden');
-
-          // Sync only if not just a refresh? 
-          // Ideally syncData handles idempotency.
-          if (event === 'SIGNED_IN') {
-            await syncData();
-          } else {
-            // For INITIAL_SESSION, maybe we just load? 
-            // syncData calls loadPromptsFromSupabaseAndMerge.
-            // Let's call it to be safe and ensure data is fresh.
-            await syncData();
-          }
-
+          renderUserProfile(session.user);
+          await migratePromptsToUser(session.user.id);
+          await syncData();
+          hideAuthOverlay();
         } else if (event === 'SIGNED_OUT') {
-          // Only run cleanup if not already done (avoid double toast)
-          if (user_session) {
-            user_session = null;
-            renderUserProfile(null);
-            updateAuthUI();
-            renderPrompts();
-            showToast('Logged out');
-            const banner = document.getElementById('welcome-banner');
-            if (banner) banner.classList.add('hidden');
-
-            // Clear intent
-            localStorage.removeItem('user_intent_login');
-          }
+          user_session = null;
+          updateAuthUI();
+          renderUserProfile(null);
+          renderPrompts();
         }
       });
-    }
-
-    // Auth Check - Removed manual getSession call as onAuthStateChange handles INITIAL_SESSION now.
-    // We keep the else block for local-only non-supabase flow if configured without credentials?
-    // But wait, if we rely on INITIAL_SESSION, we might need to wait for it?
-    // Actually, onAuthStateChange fires 'INITIAL_SESSION' very quickly on load.
-    // However, for pure Guest Mode (no session ever), we might need to handle the case where no event fires?
-    // Supabase Auth listener usually handles the session check internally.
-    // BUT the previous code had a specific check:
-    // if (!user_session) showAuthOverlay();
-
-    // Let's rely on the listener. If no session comes in, we might stay in "guest" implicitly?
-    // But we need to show the Auth Overlay if appropriate.
-
-    // To match previous behavior safely:
-    if (supabase) {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        showAuthOverlay();
-      }
-      // ALWAYS render cached prompts initially to prevent empty state
-      renderPrompts();
-      // If session exists, onAuthStateChange will handle it (INITIAL_SESSION)
     } else {
-      // No Supabase, just render local
       renderPrompts();
     }
-
-    // Force render folders (safe)
-    try { renderFolderStream(); } catch (e) { console.error("Render Stream Failed", e); } // id: added-try-catch
-
   } catch (err) {
     console.error("Init App Error:", err);
     // Fallback
     renderPrompts();
   }
-})();
+} // End of initApp definition; removed immediate call (IIFE)
 
 // Debug
 // (Moved debug assignments to EOF)
 
 async function syncData() {
-  await loadCategoriesFromCloud();
-  await syncFolders(); // Folder Sync
+  // 1. Process local deletions first (crucial to avoid resurrecting dead prompts)
+  await syncOfflineDeletes();
+
+  // 2. Process local creations/edits
   await syncOfflineQueue();
+
+  // 3. Sync metadata
+  await loadCategoriesFromCloud();
+  await syncFolders();
+
+  // 4. Merge cloud data (Last Write Wins)
   await loadPromptsFromSupabaseAndMerge();
+
   setupRealtime();
 }
 
@@ -355,23 +332,31 @@ function setupAuthListeners() {
 
     // Note: To receive a 6-digit code, ensure 'Enable Email Provider' is ON in Supabase
     // and your email template includes {{ .Token }}
-    const { error } = await supabase.auth.signInWithOtp({
+    // Switch to Code Flow (More reliable than Links)
+    console.log("Attempting login for:", email);
+
+    // Switch back to Magic Link (User Request)
+    console.log("Sending Magic Link to:", email);
+    const { data, error } = await supabaseClient.auth.signInWithOtp({
       email,
       options: {
         shouldCreateUser: true,
-        emailRedirectTo: window.location.origin // Ensure OTP code is sent
+        emailRedirectTo: window.location.origin
       }
     });
+
+    console.log("Supabase Auth Response:", { data, error });
     setLoading(sendOtpBtn, false);
 
     if (error) {
-      alert('Error sending login code: ' + error.message);
+      console.error("Auth Error:", error);
+      alert('Error sending magic link: ' + error.message);
     } else {
+      console.log("Magic Link Sent.");
       authEmailForm.classList.add('hidden');
-      // DO NOT SHOW OTP FORM. Hide it and show message instead.
-      // authOtpForm.classList.remove('hidden'); 
+      authOtpForm.classList.add('hidden'); // Ensure OTP form is hidden
       document.getElementById('sentEmailAddress').textContent = email;
-      document.getElementById('authCheckEmail').classList.remove('hidden');
+      document.getElementById('authCheckEmail').classList.remove('hidden'); // Show "Check for Link" message
     }
   });
 
@@ -392,7 +377,7 @@ function setupAuthListeners() {
     setLoading(verifyOtpBtn, true);
 
     // Attempt verification. 'email' is the generic generic OTP type for magic links/codes
-    const { data: { session }, error } = await supabase.auth.verifyOtp({
+    const { data: { session }, error } = await supabaseClient.auth.verifyOtp({
       email: emailInput.value,
       token,
       type: 'email'
@@ -406,7 +391,7 @@ function setupAuthListeners() {
       sessionStorage.setItem('skipped_auth', 'false'); // Reset skip flag on explicit login
 
       // Update User Profile
-      await supabase.from('profiles').upsert({
+      await supabaseClient.from('profiles').upsert({
         id: session.user.id,
         email: session.user.email,
         last_login: new Date().toISOString()
@@ -415,6 +400,7 @@ function setupAuthListeners() {
       hideAuthOverlay();
       showToast(`Welcome, ${session.user.email.split('@')[0]}!`);
       updateAuthUI();
+      renderUserProfile(session.user); // Explicit UI Update
 
       // MIGRATE PROMPTS
       await migratePromptsToUser(session.user.id);
@@ -516,10 +502,10 @@ function setLoading(btnElement, isLoading) {
 
 // ---------- Migration Logic ----------
 async function migratePromptsToUser(userId) {
-  if (!supabase || !device_id) return;
+  if (!supabaseClient || !device_id) return;
 
   // 1. Fetch prompts linked to device_id that have NO user_id
-  const { data: devicePrompts, error } = await supabase
+  const { data: devicePrompts, error } = await supabaseClient
     .from('prompt_saves')
     .select('id')
     .eq('device_id', device_id)
@@ -530,7 +516,7 @@ async function migratePromptsToUser(userId) {
   const idsToMigrate = devicePrompts.map(p => p.id);
 
   // 2. Update them to set user_id
-  const { error: updateError } = await supabase
+  const { error: updateError } = await supabaseClient
     .from('prompt_saves')
     .update({ user_id: userId })
     .in('id', idsToMigrate);
@@ -660,6 +646,33 @@ function setupEventListeners() {
       if (e.target === variableModalOverlay) variableModalOverlay.classList.add('hidden');
     });
   }
+
+  // Template Choice Guards
+  if (templateChoiceYes) {
+    templateChoiceYes.onclick = () => {
+      hideTemplateChoiceModal();
+      showVariableSelectionModal(lastPendingPrompt);
+    };
+  }
+  if (templateChoiceNo) {
+    templateChoiceNo.onclick = () => {
+      hideTemplateChoiceModal();
+      savePromptFinal(lastPendingPrompt);
+    };
+  }
+}
+
+function hideTemplateChoiceModal() {
+  if (templateChoiceOverlay) templateChoiceOverlay.classList.add('hidden');
+}
+
+async function savePromptFinal(promptData) {
+  if (!promptData) return;
+
+  // Logic to finalize saving a prompt (already in prompts array, just needs cloud sync and UI refresh)
+  saveToLocalStorage();
+  renderPrompts();
+  hideTemplateChoiceModal();
 }
 
 function setupCustomDropdown(dropdownElement, onSelect) {
@@ -833,7 +846,8 @@ async function handleFormSubmit(e) {
     category,
     body,
     tags,
-    date: new Date().toISOString(),
+    date: existingPrompt ? existingPrompt.date : new Date().toISOString(), // Keep creation date
+    updated_at: new Date().toISOString(), // TIMESTAMP for Last Write Wins
     favorite: existingPrompt ? existingPrompt.favorite : false,
     cloud_id: existingPrompt ? existingPrompt.cloud_id : undefined,
     folder_id: document.getElementById('folder') ? (document.getElementById('folder').value || null) : null,
@@ -880,6 +894,7 @@ function handleQuickAdd() {
     body: text,
     tags: analysis.tags,
     date: new Date().toISOString(),
+    updated_at: new Date().toISOString(), // TIMESTAMP
     favorite: analysis.isLikelyFavorite,
     storage: 'local' // keep local default for quick save
   };
@@ -898,23 +913,69 @@ async function deletePrompt(id) {
   const prompt = prompts.find(p => String(p.id) === String(id));
   if (!prompt) return;
 
+  // 1. Remove Locally IMMEDIATELY
   prompts = prompts.filter(p => String(p.id) !== String(id));
   saveToLocalStorage();
   renderPrompts();
   showToast("Deleted");
 
-  if (prompt.cloud_id && supabase) {
-    let query = supabase.from("prompt_saves").delete().eq("id", prompt.cloud_id);
+  // 2. Handle Cloud / Offline Queue
+  if (prompt.cloud_id) {
+    if (supabaseClient) {
+      // Try direct delete
+      let query = supabaseClient.from("prompt_saves").delete().eq("id", prompt.cloud_id);
 
-    // RLS: Add correct filter
-    if (user_session) {
-      query = query.eq('user_id', user_session.user.id);
+      if (user_session) {
+        query = query.eq('user_id', user_session.user.id);
+      } else {
+        query = query.eq('device_id', device_id);
+      }
+
+      const { error } = await query;
+      if (error) {
+        console.warn("Cloud delete failed, queuing:", error);
+        queueOfflineDelete(prompt.cloud_id);
+      }
     } else {
-      query = query.eq('device_id', device_id);
+      // Offline -> Queue
+      queueOfflineDelete(prompt.cloud_id);
     }
+  }
+}
 
-    const { error } = await query;
-    if (error) console.error("Cloud delete failed:", error);
+function queueOfflineDelete(cloudId) {
+  if (!offlineDeletes.includes(cloudId)) {
+    offlineDeletes.push(cloudId);
+    localStorage.setItem('offlineDeletes', JSON.stringify(offlineDeletes));
+  }
+}
+
+async function syncOfflineDeletes() {
+  if (!supabaseClient || offlineDeletes.length === 0) return;
+  console.log("Syncing offline deletes...", offlineDeletes);
+
+  // Copy queue to process
+  const toDelete = [...offlineDeletes];
+
+  // We can do this in bulk or one by one. Bulk is safer/faster.
+  // Using 'in' clause.
+  let query = supabaseClient.from('prompt_saves').delete().in('id', toDelete);
+
+  if (user_session) {
+    query = query.eq('user_id', user_session.user.id);
+  } else {
+    query = query.eq('device_id', device_id);
+  }
+
+  const { error } = await query;
+
+  if (!error) {
+    // Success - clear queue
+    offlineDeletes = [];
+    localStorage.setItem('offlineDeletes', '[]');
+    console.log("Offline deletes synced.");
+  } else {
+    console.error("Failed to sync offline deletes", error);
   }
 }
 
@@ -923,11 +984,15 @@ async function toggleFavorite(id) {
   if (!p) return;
 
   p.favorite = !p.favorite;
+  p.updated_at = new Date().toISOString(); // Update timestamp
   saveToLocalStorage();
   renderPrompts(); // Optimistic
 
-  if (p.cloud_id && supabase) {
-    let query = supabase.from('prompt_saves').update({ favorite: p.favorite }).eq('id', p.cloud_id);
+  if (p.cloud_id && supabaseClient) {
+    let query = supabaseClient.from('prompt_saves').update({
+      favorite: p.favorite,
+      updated_at: p.updated_at
+    }).eq('id', p.cloud_id);
 
     // RLS: Add correct filter
     if (user_session) {
@@ -953,7 +1018,7 @@ async function savePromptToSupabase(prompt) {
     return null;
   }
 
-  if (!supabase) {
+  if (!supabaseClient) {
     queueOffline(prompt);
     return null;
   }
@@ -969,13 +1034,14 @@ async function savePromptToSupabase(prompt) {
     category: categoryVal,
     folder_id: prompt.folder_id || null, // Folder support
     user_id: user_session ? user_session.user.id : null,
-    device_id: device_id
+    device_id: device_id,
+    updated_at: prompt.updated_at || new Date().toISOString() // Send client timestamp
   };
 
   try {
     if (prompt.cloud_id) {
       // UPDATE
-      let query = supabase.from("prompt_saves").update(payload).eq('id', prompt.cloud_id);
+      let query = supabaseClient.from("prompt_saves").update(payload).eq('id', prompt.cloud_id);
 
       // RLS Safety Check
       if (user_session) {
@@ -990,7 +1056,7 @@ async function savePromptToSupabase(prompt) {
       return data;
     } else {
       // INSERT
-      const { data, error } = await supabase
+      const { data, error } = await supabaseClient
         .from("prompt_saves")
         .insert([payload])
         .select()
@@ -1015,10 +1081,10 @@ async function savePromptToSupabase(prompt) {
 }
 
 async function loadPromptsFromSupabaseAndMerge() {
-  if (!supabase) return;
+  if (!supabaseClient) return;
 
   try {
-    let query = supabase.from("prompt_saves").select("*").order("created_at", { ascending: false });
+    let query = supabaseClient.from("prompt_saves").select("*").order("created_at", { ascending: false });
 
     // TASK 2: Show Only User’s Supabase Prompts
     if (user_session) {
@@ -1037,14 +1103,12 @@ async function loadPromptsFromSupabaseAndMerge() {
 
     if (!Array.isArray(data)) return;
 
-    // Merge Logic
-    // 1. Cloud data is source of truth for synced items.
-    // 2. Local items without cloud_id are preserved.
-
+    // Merge Logic: Last Write Wins (LWW)
+    // 1. Map Cloud Data
     const cloudMap = new Map();
     data.forEach(row => {
       cloudMap.set(row.id, {
-        id: row.id, // Use cloud UUID
+        id: row.id,
         cloud_id: row.id,
         title: row.title,
         body: row.body,
@@ -1052,27 +1116,56 @@ async function loadPromptsFromSupabaseAndMerge() {
         favorite: row.favorite,
         category: row.category,
         date: row.created_at,
+        updated_at: row.updated_at || row.created_at, // Fallback if null
         device_id: row.device_id,
         user_id: row.user_id,
-        folder_id: row.folder_id // Map folder_id
+        folder_id: row.folder_id,
+        storage: 'cloud'
       });
     });
 
-    // Rebuild prompts array
+    // 2. Iterate Local Prompts
+    // - If synced (has cloud_id): Compare timestamps. 
+    //   - Local > Cloud? Keep Local (and Queue for sync).
+    //   - Cloud >= Local? Take Cloud.
+    // - If unsynced (no cloud_id): Keep Local.
+
     const mergedPrompts = [];
+    const localMap = new Map(); // Track what we've processed from local to avoid dupes
 
-    // Add all cloud items
-    for (const item of cloudMap.values()) {
-      mergedPrompts.push(item);
-    }
+    prompts.forEach(localP => {
+      localMap.set(localP.id, localP);
 
-    // Add local items that are NOT in cloud yet
-    // Strategy: if local item has a cloud_id, ignore it (cloud version wins).
-    // If local item has NO cloud_id, keep it.
-    for (const localItem of prompts) {
-      if (!localItem.cloud_id) {
-        mergedPrompts.push(localItem);
+      if (localP.cloud_id && cloudMap.has(localP.cloud_id)) {
+        const cloudP = cloudMap.get(localP.cloud_id);
+        const localTime = new Date(localP.updated_at || 0).getTime(); // 0 if missing (legacy)
+        const cloudTime = new Date(cloudP.updated_at).getTime();
+
+        if (localTime > cloudTime) {
+          // Local is newer. Keep Local.
+          // Needs Push to Cloud (handled by offlineQueue or next edit)
+          // For now, we just keep local state. 
+          // Ideally we should add to offlineQueue to ensure sync?
+          // Actually, if we just keep it local, next syncData won't push it unless modified.
+          // Let's add it to offlineQueue so it pushes eventual consistency!
+          console.log(`Conflict: Local (${localTime}) > Cloud (${cloudTime}). Keeping Local & Queuing.`);
+          queueOffline(localP);
+          mergedPrompts.push(localP);
+        } else {
+          // Cloud is newer or equal. Accept Cloud.
+          mergedPrompts.push(cloudP);
+        }
+        // Remove from cloudMap so we don't add it again as "new from cloud"
+        cloudMap.delete(localP.cloud_id);
+      } else {
+        // Not in cloud (yet), or local-only. Keep it.
+        mergedPrompts.push(localP);
       }
+    });
+
+    // 3. Add remaining Cloud items (New arrivals from other devices)
+    for (const cloudP of cloudMap.values()) {
+      mergedPrompts.push(cloudP);
     }
 
     prompts = mergedPrompts; // Replace
@@ -1122,8 +1215,8 @@ function renderCategories() {
 }
 
 async function loadCategoriesFromCloud() {
-  if (!supabase || !device_id) return;
-  const { data } = await supabase.from('device_metadata').select('categories').eq('device_id', device_id).maybeSingle();
+  if (!supabaseClient || !device_id) return;
+  const { data } = await supabaseClient.from('device_metadata').select('categories').eq('device_id', device_id).maybeSingle();
   if (data && data.categories && Array.isArray(data.categories)) {
     // Merge unique
     const set = new Set([...categories, ...data.categories]);
@@ -1134,12 +1227,12 @@ async function loadCategoriesFromCloud() {
 }
 
 async function syncCategoriesToCloud() {
-  if (!supabase || !device_id) return;
+  if (!supabaseClient || !device_id) return;
   // If user is logged in, maybe store categories in profiles? 
   // For now stick to device_metadata to keep it simple, or link device_metadata to user?
   // Let's keep using device_metadata as a bucket for categories.
 
-  await supabase.from('device_metadata').upsert({
+  await supabaseClient.from('device_metadata').upsert({
     device_id: device_id,
     categories: categories,
     updated_at: new Date().toISOString()
@@ -1149,9 +1242,9 @@ async function syncCategoriesToCloud() {
 // ---------- Folder System Logic ----------
 
 async function syncFolders() {
-  if (!supabase || !user_session) return; // Only sync if logged in
+  if (!supabaseClient || !user_session) return; // Only sync if logged in
 
-  const { data, error } = await supabase.from('folders').select('*').order('created_at');
+  const { data, error } = await supabaseClient.from('folders').select('*').order('created_at');
   if (data && !error) {
     folders = data;
     localStorage.setItem('folders', JSON.stringify(folders));
@@ -1175,8 +1268,8 @@ async function createFolder(name) {
   renderFolderStream();
   renderPrompts();
 
-  if (user_session && supabase) {
-    await supabase.from('folders').insert([{
+  if (user_session && supabaseClient) {
+    await supabaseClient.from('folders').insert([{
       id: newFolder.id,
       user_id: user_session.user.id,
       name: newFolder.name
@@ -1208,8 +1301,8 @@ async function deleteFolder(id) {
   renderPrompts();
 
   // Cloud Delete
-  if (user_session && supabase) {
-    await supabase.from('folders').delete().eq('id', id);
+  if (user_session && supabaseClient) {
+    await supabaseClient.from('folders').delete().eq('id', id);
     // Note: SQL 'ON DELETE SET NULL' handles the prompts in cloud automatically!
   }
 }
@@ -1522,10 +1615,18 @@ This is your personal prompt library — built to help you think, create, and mo
     let titleHtml = escapeHtml(p.title);
     if (res.matchType === 'title' && query) titleHtml = highlight(p.title, query);
 
-    let tagsHtml = (Array.isArray(p.tags) ? p.tags : (typeof p.tags === 'string' ? p.tags.split(',').map(t => t.trim()) : [])).map(t => {
+    const rawTags = Array.isArray(p.tags) ? p.tags : (typeof p.tags === 'string' ? p.tags.split(',').map(t => t.trim()) : []);
+    const displayedTags = rawTags.slice(0, 5);
+    const hiddenCount = rawTags.length - 5;
+
+    let tagsHtml = displayedTags.map(t => {
       if (res.matchType === 'tag' && t.toLowerCase().includes(query)) return `<span class="tag"><mark>#${escapeHtml(t)}</mark></span>`;
       return `<span class="tag">#${escapeHtml(t)}</span>`;
     }).join('');
+
+    if (hiddenCount > 0) {
+      tagsHtml += `<span class="tag-more">+${hiddenCount}</span>`;
+    }
 
     // Usage count (initialize to 0 if not set)
     const usageCount = typeof p.total_usage === 'number' ? p.total_usage : 0;
@@ -1704,8 +1805,7 @@ function handleVariableCopy() {
 copyFinalBtn.onclick = handleVariableCopy;
 
 // ========== NEW TEMPLATE FLOW ==========
-let pendingTemplatePrompt = null;
-let selectedVariableWords = new Set();
+// (Using global lastPendingPrompt and selectedVariableWords from top of file)
 
 // Heuristics to suggest likely variables
 function suggestVariables(text) {
@@ -1743,7 +1843,7 @@ function suggestVariables(text) {
 // ========== NEW TEMPLATE FLOW ==========
 
 function showVariableSelectionModal(prompt) {
-  pendingTemplatePrompt = prompt;
+  lastPendingPrompt = prompt;
   selectedVariableWords = new Set();
   const suggestions = suggestVariables(prompt.body);
 
@@ -1798,23 +1898,23 @@ function showVariableSelectionModal(prompt) {
 
 function hideVariableSelectionModal() {
   varSelectOverlay.classList.add('hidden');
-  pendingTemplatePrompt = null;
+  lastPendingPrompt = null;
   selectedVariableWords = new Set();
 }
 
 function confirmVariableSelection() {
   console.log('Confirming selection...', {
-    promptId: pendingTemplatePrompt ? pendingTemplatePrompt.id : 'null',
+    promptId: lastPendingPrompt ? lastPendingPrompt.id : 'null',
     selectedWords: Array.from(selectedVariableWords)
   });
 
-  if (!pendingTemplatePrompt || selectedVariableWords.size === 0) {
+  if (!lastPendingPrompt || selectedVariableWords.size === 0) {
     showToast('Select at least one word to use as a variable.');
     return;
   }
 
   // Replace selected words with {{var_name}} in the prompt body
-  let newBody = pendingTemplatePrompt.body;
+  let newBody = lastPendingPrompt.body;
 
   selectedVariableWords.forEach(word => {
     // Create a variable name (lowercase, underscores for spaces)
@@ -1827,7 +1927,7 @@ function confirmVariableSelection() {
   console.log('Transformed Body:', newBody);
 
   // Update the prompt
-  const idx = prompts.findIndex(p => p.id === pendingTemplatePrompt.id);
+  const idx = prompts.findIndex(p => p.id === lastPendingPrompt.id);
   if (idx !== -1) {
     prompts[idx].body = newBody;
     saveToLocalStorage();
@@ -1911,7 +2011,7 @@ async function updateUsageCount(id) {
   saveToLocalStorage();
 
   if (user_session && prompts[idx].cloud_id) {
-    await supabase.from('prompt_saves').update({
+    await supabaseClient.from('prompt_saves').update({
       total_usage: prompts[idx].total_usage
     }).eq('id', prompts[idx].cloud_id);
   }
@@ -2001,7 +2101,7 @@ function queueOffline(item) {
 
 async function syncOfflineQueue() {
   offlineQueue = JSON.parse(localStorage.getItem('offlineQueue') || '[]');
-  if (!supabase || !offlineQueue.length) return;
+  if (!supabaseClient || !offlineQueue.length) return;
 
   const queue = [...offlineQueue];
   const remaining = [];
@@ -2020,7 +2120,7 @@ async function syncOfflineQueue() {
         category: item.category || 'other'
       };
 
-      const { data, error } = await supabase
+      const { data, error } = await supabaseClient
         .from("prompt_saves")
         .insert([payload])
         .select()
@@ -2129,9 +2229,9 @@ class TagManager {
     });
 
     // 2. Load from DB (if connected)
-    if (supabase) {
+    if (supabaseClient) {
       try {
-        const { data, error } = await supabase.from('tags').select('name').limit(100);
+        const { data, error } = await supabaseClient.from('tags').select('name').limit(100);
         if (error) {
           // Silent fail for missing table (42P01) or standard REST errors
           return;
@@ -2251,14 +2351,14 @@ class TagManager {
   // Sync new tags to DB (called on Save)
   // Sync new tags to DB (called on Save)
   async syncTagsToCloud(tagsToSync = null) {
-    if (!supabase) return;
+    if (!supabaseClient) return;
     const source = tagsToSync ? new Set(tagsToSync) : this.tags;
     const newTags = Array.from(source).map(name => ({ name }));
 
     // Fire and forget insert (ignore duplicates)
     if (newTags.length > 0) {
       try {
-        await supabase.from('tags').upsert(newTags, { onConflict: 'name', ignoreDuplicates: true });
+        await supabaseClient.from('tags').upsert(newTags, { onConflict: 'name', ignoreDuplicates: true });
       } catch (e) { console.warn('Tag sync error', e); }
     }
   }
@@ -2275,8 +2375,8 @@ function capitalize(s) {
 }
 
 function setupRealtime() {
-  if (supabase) {
-    supabase.channel('public:prompt_saves')
+  if (supabaseClient) {
+    supabaseClient.channel('public:prompt_saves')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'prompt_saves' }, () => {
         loadPromptsFromSupabaseAndMerge();
       })
@@ -2347,7 +2447,7 @@ async function handleLogout() {
 
   // 2. Perform Supabase SignOut
   // Even if this fails or event doesn't fire, UI is already clean.
-  const { error } = await supabase.auth.signOut();
+  const { error } = await supabaseClient.auth.signOut();
   if (error) {
     console.error('Logout error:', error);
   }
@@ -2407,12 +2507,12 @@ const NetworkManager = {
 
   async pingSupabase() {
     if (!navigator.onLine) return false;
-    if (!supabase) return true;
+    if (!supabaseClient) return true;
 
     try {
       const timeout = new Promise((_, reject) => setTimeout(() => reject('timeout'), 4000));
       await Promise.race([
-        supabase.from('prompt_saves').select('id').limit(1).maybeSingle(),
+        supabaseClient.from('prompt_saves').select('id').limit(1).maybeSingle(),
         timeout
       ]);
       return true;
@@ -2444,5 +2544,18 @@ const NetworkManager = {
 // Debug
 window.renderFolderStream = renderFolderStream;
 window.createFolder = createFolder;
-console.log("EOF reached - App.js Loaded");
-document.addEventListener('DOMContentLoaded', () => NetworkManager.init());
+
+console.log("EOF reached - App.js Loaded. Triggering Boot...");
+
+// Boot Sequence: Ensure DOM is ready, then trigger initApp
+window.addEventListener('load', () => {
+  console.log("Window Load Event - Starting App Boot...");
+  initApp();
+  NetworkManager.init();
+});
+
+// Re-expose for debug if needed
+window.initApp = initApp;
+window.prompts = prompts;
+window.folders = folders;
+window.supabaseClient = supabaseClient;

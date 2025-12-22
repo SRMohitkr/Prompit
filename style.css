@@ -59,7 +59,7 @@ body {
 }
 
 .app-container {
-    max-width: 1320px;
+    max-width: 1200px;
     margin: 0 auto;
     padding-bottom: 50px;
     width: 100%;
@@ -668,9 +668,23 @@ body.dark-mode .age-text {
     border-radius: 12px;
 }
 
+.tag-more {
+    background: rgba(0, 0, 0, 0.05);
+    color: var(--text-secondary);
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
 body.dark-mode .tag {
     background: rgba(107, 163, 255, 0.15);
     color: var(--primary-color);
+}
+
+body.dark-mode .tag-more {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-secondary);
 }
 
 /* Subtle usage text - confidence signal without gamification */
