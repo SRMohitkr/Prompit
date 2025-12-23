@@ -133,6 +133,31 @@ begin
   end if;
 end $$;
 
+-- 7. Shared Prompts (Immutable Link Snapshots)
+create table if not exists public.shared_prompts (
+  id uuid primary key default gen_random_uuid(),
+  short_code text unique not null,
+  original_author_id uuid references auth.users(id),
+  content_snapshot jsonb not null,
+  views integer default 0,
+  created_at timestamp with time zone default now()
+);
+
+-- RLS for Shared Prompts
+alter table public.shared_prompts enable row level security;
+
+-- Public Read Access (For recipients)
+create policy "Allow public read access to shared prompts" on shared_prompts
+  for select using (true);
+
+-- Authenticated/Guest Creation Access (For senders)
+create policy "Allow creation of shared prompts" on shared_prompts
+  for insert with check (true);
+
+-- Only Author Can Delete (Revoke)
+create policy "Users can delete their own shared links" on shared_prompts
+  for delete using (auth.uid() = original_author_id);
+
 =====================================================
 */
 
@@ -254,6 +279,16 @@ async function initApp() {
     renderCategories();
     renderFolderStream();
 
+    // RENDER FAST: Show local prompts immediately for LCP
+    renderPrompts();
+
+    // Check for incoming shared link FIRST (Routing)
+    const isSharedView = await checkSharedLink();
+    if (isSharedView) {
+      console.log("Shared View Active - Halting Main App Init");
+      return;
+    }
+
     // Check initial session
     if (supabaseClient) {
       const { data: { session }, error } = await supabaseClient.auth.getSession();
@@ -264,10 +299,10 @@ async function initApp() {
         console.log("initApp: Session found for", session.user.email);
         updateAuthUI();
         renderUserProfile(session.user);
-        await syncData();
+        // Sync in background to avoid blocking LCP
+        syncData();
       } else {
-        console.log("initApp: No session, rendering guest prompts.");
-        renderPrompts();
+        console.log("initApp: No session.");
       }
 
       // Listen for auth changes (Magic Link redirects, logouts, etc.)
@@ -896,7 +931,8 @@ function handleQuickAdd() {
     date: new Date().toISOString(),
     updated_at: new Date().toISOString(), // TIMESTAMP
     favorite: analysis.isLikelyFavorite,
-    storage: 'local' // keep local default for quick save
+    storage: 'local', // keep local default for quick save
+    folder_id: activeFolderId
   };
 
   prompts.unshift(newPrompt);
@@ -1430,19 +1466,24 @@ function renderPrompts(filterText = '', categoryFilter = 'all') {
   grid.innerHTML = '';
 
   // TASK 2: Pinned Welcome Prompt (Additive)
-  // Show for EVERYONE (Guests + Logged In) if not searching AND in 'All Prompts'
-  if (!filterText && categoryFilter === 'all' && !activeFolderId) {
+  // ONLY show in Guest Mode (!user_session) and when in 'All Prompts' without search
+  if (!user_session && !filterText && categoryFilter === 'all' && !activeFolderId) {
     const pinnedCard = document.createElement('div');
     pinnedCard.className = 'prompt-card pinned-guide-card';
     pinnedCard.innerHTML = `
         <div class="card-header">
     <div class="card-title">👋 Welcome to Prompit</div>
     <div class="card-actions">
-        <button class="icon-btn" title="Pinned">📌</button>
+        <button class="icon-btn" onclick="dismissWelcomeCard(event)" title="Dismiss Welcome Guide">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+        </button>
     </div>
 </div>
 
-<div class="category-badge" style="background:rgba(255,255,255,0.2);">
+<div class="category-badge">
     Getting Started
 </div>
 
@@ -1641,6 +1682,9 @@ This is your personal prompt library — built to help you think, create, and mo
         <div class="card-actions">
            <button class="icon-btn fav-btn ${p.favorite ? 'active' : ''}" onclick="toggleFavorite('${p.id}')" title="Favorite">${favIcon}</button>
            <button class="icon-btn" onclick="copyPrompt('${p.id}')" title="Copy">${copyIcon}</button>
+           <button class="icon-btn" onclick="sharePrompt('${p.id}')" title="Share (Public Link)">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>
+           </button>
            <button class="icon-btn" onclick="openEditModal('${p.id}')" title="Edit">${editIcon}</button>
            <button class="icon-btn" onclick="deletePrompt('${p.id}')" title="Delete" style="color:var(--danger-color);">${trashIcon}</button>
         </div>
@@ -1722,6 +1766,16 @@ function escapeHtml(text) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
+}
+
+function dismissWelcomeCard(e) {
+  if (e) {
+    e.stopPropagation();
+    const card = e.target.closest('.pinned-guide-card');
+    if (card) card.style.display = 'none';
+  }
+  localStorage.setItem('welcomeCardDismissed', 'true');
+  showToast('Welcome guide dismissed!');
 }
 
 // Track recent copies to prevent accidental double-counting within 2 seconds
@@ -2541,6 +2595,196 @@ const NetworkManager = {
     showAuthOverlay();
   }
 };
+
+// ---------- Sharing System (Snapshot Logic) ----------
+
+async function sharePrompt(id) {
+  const prompt = prompts.find(p => String(p.id) === String(id));
+  if (!prompt) return showToast('Prompt not found');
+
+  if (!supabaseClient) {
+    alert("Sharing requires a Cloud Connection. Please login or check your network.");
+    return;
+  }
+
+  // 1. Generate Content Snapshot (Immutable)
+  const snapshot = {
+    title: prompt.title,
+    body: prompt.body,
+    tags: prompt.tags,
+    category: prompt.category,
+    created_at: new Date().toISOString()
+  };
+
+  // 2. Generate Hash (8 chars)
+  const shortCode = crypto.randomUUID().split('-')[0]; // Simple 8-char hex
+
+  // 3. Insert into shared_prompts
+  try {
+    const { error } = await supabaseClient
+      .from('shared_prompts')
+      .insert({
+        short_code: shortCode,
+        original_author_id: user_session ? user_session.user.id : null,
+        content_snapshot: snapshot
+      });
+
+    if (error) throw error;
+
+    // 4. Generate Link and Open Modal (YouTube Style)
+    const shareUrl = `${window.location.origin}${window.location.pathname}?share=${shortCode}`;
+    openShareModal(shareUrl, prompt.title);
+
+  } catch (err) {
+    console.error("Share Failed:", err);
+    showToast('Failed to create share link.');
+  }
+}
+
+function openShareModal(url, title) {
+  const overlay = document.getElementById('shareModalOverlay');
+  const input = document.getElementById('shareInputLink');
+  const copyBtn = document.getElementById('shareCopyBtnMain');
+  const closeBtn = document.getElementById('closeShareModal');
+
+  // Set link
+  input.value = url;
+
+  // Reset Copy Logic
+  copyBtn.textContent = 'Copy';
+  copyBtn.onclick = () => {
+    input.select();
+    navigator.clipboard.writeText(url);
+    copyBtn.textContent = 'Copied!';
+    setTimeout(() => copyBtn.textContent = 'Copy', 2000);
+  };
+
+  // Setup Social Links
+  const encodedUrl = encodeURIComponent(url);
+  const encodedTitle = encodeURIComponent(`Check out this prompt: ${title}`);
+
+  const wa = document.getElementById('shareWa');
+  if (wa) wa.href = `https://wa.me/?text=${encodedTitle} ${encodedUrl}`;
+
+  const x = document.getElementById('shareX');
+  if (x) x.href = `https://twitter.com/intent/tweet?text=${encodedTitle}&url=${encodedUrl}`;
+
+  const mail = document.getElementById('shareEmail');
+  if (mail) mail.href = `mailto:?subject=${encodeURIComponent(title)}&body=${encodedTitle} ${encodedUrl}`;
+
+  const li = document.getElementById('shareLinkedin');
+  if (li) li.href = `https://www.linkedin.com/sharing/share-offsite/?url=${encodedUrl}`;
+
+  // Generic copy icon also copies
+  const embed = document.getElementById('shareCopyIcon');
+  if (embed) embed.onclick = () => {
+    navigator.clipboard.writeText(url);
+    showToast('Link copied to clipboard');
+  };
+
+  // Show
+  overlay.classList.remove('hidden');
+
+  // Close Logic
+  const close = () => overlay.classList.add('hidden');
+  closeBtn.onclick = close;
+  overlay.onclick = (e) => { if (e.target === overlay) close(); };
+
+  // Select text for easy copy
+  setTimeout(() => input.select(), 100);
+}
+
+async function checkSharedLink() {
+  const params = new URLSearchParams(window.location.search);
+  const shareCode = params.get('share');
+
+  if (shareCode) {
+    console.log("Shared Link Detected:", shareCode);
+    const success = await loadSharedPrompt(shareCode);
+    return success;
+  }
+  return false;
+}
+
+async function loadSharedPrompt(code) {
+  if (!supabaseClient) return false;
+
+  // 1. Fetch Snapshot
+  const { data, error } = await supabaseClient
+    .from('shared_prompts')
+    .select('*')
+    .eq('short_code', code)
+    .single();
+
+  if (error || !data) {
+    alert("This shared link is invalid or has been deleted.");
+    // Clean URL
+    window.history.replaceState({}, document.title, window.location.pathname);
+    return false;
+  }
+
+  // 2. Enter Viewer Mode
+  enterViewerMode(data);
+  return true;
+}
+
+function enterViewerMode(sharedParams) {
+  const container = document.getElementById('sharedViewContainer');
+  const contentArea = document.getElementById('sharedContentArea');
+  const snapshot = sharedParams.content_snapshot;
+
+  // Render Card
+  contentArea.innerHTML = `
+        <h1 class="shared-title">${escapeHtml(snapshot.title)}</h1>
+        <div class="category-badge" style="margin-bottom:15px;">${escapeHtml(snapshot.category || 'other')}</div>
+        <div class="shared-body">${escapeHtml(snapshot.body)}</div>
+        <div class="tags" style="margin-top:20px;">
+             ${(Array.isArray(snapshot.tags) ? snapshot.tags : []).map(t => `<span class="tag">#${escapeHtml(t)}</span>`).join('')}
+        </div>
+    `;
+
+  // Bind Actions
+  const copyBtn = document.getElementById('sharedCopyBtn');
+  copyBtn.onclick = () => {
+    navigator.clipboard.writeText(snapshot.body);
+    copyBtn.textContent = "Copied!";
+    setTimeout(() => copyBtn.textContent = "Copy to Clipboard", 2000);
+  };
+
+  const saveBtn = document.getElementById('sharedSaveBtn');
+  saveBtn.onclick = async () => {
+    // Import logic
+    const newPrompt = {
+      id: crypto.randomUUID(),
+      title: snapshot.title,
+      body: snapshot.body,
+      tags: snapshot.tags,
+      category: snapshot.category,
+      storage: user_session ? 'cloud' : 'local',
+      date: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      favorite: false
+    };
+
+    prompts.unshift(newPrompt);
+    saveToLocalStorage();
+    renderPrompts();
+    showToast('Saved to your Library! 💾');
+
+    // Convert current view to standard app view
+    container.classList.add('hidden');
+    window.history.replaceState({}, document.title, window.location.pathname);
+
+    if (user_session) {
+      await savePromptToSupabase(newPrompt);
+    }
+  };
+
+  // Show
+  container.classList.remove('hidden');
+}
+
+
 // Debug
 window.renderFolderStream = renderFolderStream;
 window.createFolder = createFolder;

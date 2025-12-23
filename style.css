@@ -145,6 +145,91 @@ body.dark-mode .search-box input:focus {
     /* Keep specific focus ring, it's functional */
 }
 
+/* Shared View Container */
+.shared-view-container {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: var(--bg-gradient);
+    z-index: 9999;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+    animation: fadeIn 0.3s ease-out;
+}
+
+.shared-card-wrapper {
+    width: 100%;
+    max-width: 600px;
+    padding: 40px;
+    border-radius: 24px;
+    background: rgba(255, 255, 255, 0.85);
+    box-shadow: var(--shadow-xl);
+    display: flex;
+    flex-direction: column;
+    max-height: 90vh;
+}
+
+body.dark-mode .shared-card-wrapper {
+    background: rgba(30, 30, 30, 0.95);
+}
+
+.shared-header {
+    border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+    padding-bottom: 20px;
+    margin-bottom: 24px;
+    text-align: center;
+}
+
+.logo-area.small span {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+/* Shared Content Area */
+#sharedContentArea {
+    flex: 1;
+    overflow-y: auto;
+    margin-bottom: 30px;
+}
+
+.shared-title {
+    font-size: 1.8rem;
+    font-weight: 800;
+    margin-bottom: 16px;
+    line-height: 1.2;
+    color: var(--text-color);
+}
+
+.shared-body {
+    font-family: inherit;
+    font-size: 1.1rem;
+    line-height: 1.6;
+    color: var(--text-color);
+    white-space: pre-wrap;
+    background: rgba(0, 0, 0, 0.03);
+    padding: 24px;
+    border-radius: 12px;
+}
+
+body.dark-mode .shared-body {
+    background: rgba(0, 0, 0, 0.2);
+}
+
+.shared-meta {
+    text-align: center;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin-top: 16px;
+    opacity: 0.7;
+}
+
 /* Custom Dropdown */
 .custom-dropdown {
     position: relative;
@@ -562,6 +647,51 @@ body.dark-mode .prompt-card:hover {
     box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
 }
 
+/* Pinned Guide Card - Premium Glassmorphism */
+.pinned-guide-card {
+    background: rgba(255, 255, 255, 0.3) !important;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: none !important;
+    box-shadow: 0 8px 32px rgba(31, 38, 135, 0.1) !important;
+    color: var(--text-color);
+}
+
+body.dark-mode .pinned-guide-card {
+    background: rgba(255, 255, 255, 0.05) !important;
+    border: none !important;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4) !important;
+}
+
+.pinned-guide-card:hover {
+    background: rgba(255, 255, 255, 0.45) !important;
+    transform: translateY(-5px);
+}
+
+body.dark-mode .pinned-guide-card:hover {
+    background: rgba(255, 255, 255, 0.1) !important;
+}
+
+.pinned-guide-card .card-title {
+    color: var(--primary-color);
+}
+
+.pinned-guide-card .category-badge {
+    background: rgba(74, 144, 226, 0.15);
+    color: var(--primary-color);
+    padding: 4px 8px;
+    border-radius: 8px;
+}
+
+.pinned-guide-card .card-body {
+    background: transparent !important;
+    border-left: 3px solid var(--primary-color);
+    padding-left: 15px;
+    margin: 15px 0;
+    font-family: inherit !important;
+    font-size: 1rem !important;
+}
+
 .card-header {
     display: flex;
     justify-content: space-between;
@@ -803,6 +933,152 @@ body.dark-mode .fab:hover {
     pointer-events: none;
     transition: opacity 0.3s;
 }
+
+.modal-overlay.hidden {
+    display: none;
+    /* Helpers handle this via class toggle usually, but let's keep it safe */
+}
+
+/* When ACTIVE (not hidden) */
+.modal-overlay:not(.hidden) {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* Share Modal Specifics */
+.share-modal {
+    width: 600px;
+    max-width: 95vw;
+    padding: 24px;
+    overflow: hidden;
+    /* Contains scroll */
+}
+
+/* Close btn tweak */
+.share-modal .close-btn {
+    font-size: 1.5rem;
+}
+
+/* Carousel wrapper with potential scroll */
+.share-carousel-wrapper {
+    margin: 20px 0 30px 0;
+    overflow-x: auto;
+    padding-bottom: 10px;
+    /* Hide scrollbar but keep functionality */
+    -ms-overflow-style: none;
+    /* IE and Edge */
+    scrollbar-width: none;
+    /* Firefox */
+}
+
+.share-carousel-wrapper::-webkit-scrollbar {
+    display: none;
+}
+
+.share-carousel {
+    display: flex;
+    gap: 20px;
+    padding: 0 5px;
+    /* buffer */
+}
+
+.share-icon-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    text-decoration: none;
+    color: var(--text-color);
+    font-size: 0.8rem;
+    font-weight: 500;
+    min-width: 60px;
+    cursor: pointer;
+    background: none;
+    border: none;
+    transition: transform 0.2s;
+}
+
+.share-icon-btn:hover {
+    transform: translateY(-3px);
+}
+
+.icon-circle {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    transition: box-shadow 0.2s;
+    background: #f0f0f0;
+    /* Default fallback */
+}
+
+/* Brand Colors */
+.whatsapp .icon-circle {
+    background: #25D366;
+}
+
+.x-twitter .icon-circle {
+    background: #000000;
+}
+
+.email .icon-circle {
+    background: #888888;
+    color: white;
+}
+
+.copy-generic .icon-circle {
+    background: #f1f2f6;
+    color: #333;
+}
+
+.linkedin .icon-circle {
+    background: #0077b5;
+}
+
+body.dark-mode .copy-generic .icon-circle {
+    background: #333;
+    color: #ddd;
+}
+
+/* Notion-style / Youtube-style Copy Box */
+.share-notion-box {
+    display: flex;
+    align-items: center;
+    background: rgba(0, 0, 0, 0.04);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    border-radius: 12px;
+    padding: 6px 6px 6px 16px;
+    /* p-left text, p-right button */
+    gap: 10px;
+}
+
+body.dark-mode .share-notion-box {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.15);
+}
+
+#shareInputLink {
+    flex: 1;
+    background: none;
+    border: none;
+    outline: none;
+    font-family: inherit;
+    font-size: 0.95rem;
+    color: var(--text-color);
+    text-overflow: ellipsis;
+    /* Readonly look */
+}
+
+#shareCopyBtnMain {
+    padding: 8px 24px;
+    border-radius: 8px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
 
 .modal-overlay.visible {
     opacity: 1;
