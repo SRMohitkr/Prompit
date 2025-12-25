@@ -28,13 +28,13 @@ mark {
 }
 
 body.dark-mode {
-    --bg-gradient: linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%);
-    --glass-bg: rgba(20, 20, 20, 0.9);
-    --glass-border: rgba(255, 255, 255, 0.08);
-    --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
+    --bg-gradient: linear-gradient(135deg, #0d0d0d 0%, #1a1a1a 100%);
+    --glass-bg: rgba(23, 23, 23, 0.95);
+    --glass-border: rgba(255, 255, 255, 0.1);
+    --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.8);
     --primary-color: #6ba3ff;
-    --text-color: #e0e0e0;
-    --text-secondary: #b0b0b0;
+    --text-color: #ececec;
+    --text-secondary: #b4b4b4;
     --danger-color: #ff6b6b;
     --success-color: #51cf66;
 }
@@ -380,10 +380,13 @@ body.dark-mode .dropdown-options {
     padding: 8px;
     border-radius: 12px;
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
-    width: 180px;
+    width: 220px;
+    /* Increased slightly */
     z-index: 2000;
     border: 1px solid rgba(0, 0, 0, 0.1);
     animation: slideDown 0.2s ease-out forwards;
+    overflow: hidden;
+    /* Ensure content doesn't bleed */
 }
 
 body.dark-mode .profile-dropdown-menu {
@@ -398,14 +401,12 @@ body.dark-mode .profile-dropdown-menu {
     padding: 8px 10px;
     border-bottom: 1px solid rgba(0, 0, 0, 0.05);
 
-    /* Truncation (already partially there, reinforcing) */
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    display: block;
-    /* Ensure it respects width */
+    /* Allow wrapping and break long email addresses */
+    white-space: normal;
+    overflow: visible;
+    word-break: break-all;
     max-width: 100%;
-    /* Relative to parent (180px - padding) */
+    box-sizing: border-box;
 }
 
 body.dark-mode .profile-email {
@@ -454,10 +455,13 @@ body.dark-mode .profile-email {
     cursor: pointer;
     transition: background 0.2s;
     color: var(--text-color);
+    display: flex;
+    align-items: center;
 
-    /* Truncate long options - User requested NO wrapping of text, but allowing width to expand */
+    /* Truncate long options */
     white-space: nowrap;
-    /* overflow/ellipsis removed to allow full text visibility with max-content container */
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .dropdown-option:hover {
@@ -482,6 +486,11 @@ body.dark-mode .dropdown-option:hover {
 
 .dropdown-option .text {
     font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    /* Allow it to take up available space and truncate */
 }
 
 /* Modal specific dropdown styles */
@@ -757,9 +766,8 @@ body.dark-mode .card-body {
     margin-top: auto;
     display: flex;
     justify-content: space-between;
-    align-items: center;
+    align-items: flex-end;
     font-size: 0.85rem;
-    flex-wrap: wrap;
     gap: 12px;
 }
 
@@ -825,7 +833,34 @@ body.dark-mode .tag-more {
     font-weight: 500;
     letter-spacing: 0.3px;
     white-space: nowrap;
+}
+
+.footer-left {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    min-width: 0;
+    /* Prevents overflow/pushing */
+}
+
+.footer-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     margin-left: auto;
+}
+
+.share-btn-footer {
+    opacity: 0.6;
+    padding: 4px !important;
+    color: var(--text-secondary);
+}
+
+.share-btn-footer:hover {
+    opacity: 1;
+    color: var(--primary-color);
+    background: rgba(74, 144, 226, 0.1);
 }
 
 .category-badge {
@@ -1464,16 +1499,163 @@ body.dark-mode .app-footer {
     color: #1877f2 !important;
 }
 
+/* =========================================
+   Responsive Overhaul (Phone, Tablet, Desktop)
+   ========================================= */
+
+/* Tablets (Portrait) - 768px */
 @media (max-width: 768px) {
-    .app-footer {
+    .app-container {
+        padding: 15px;
+    }
+
+    /* Header & Controls */
+    header {
         flex-direction: column;
-        text-align: center;
+        align-items: flex-start;
         padding: 20px;
+    }
+
+    .controls {
+        width: 100%;
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 12px;
+    }
+
+    .search-box {
+        grid-column: span 2;
+    }
+
+    /* Paste Area */
+    .paste-area {
+        flex-direction: column;
+        padding: 20px;
+    }
+
+    .paste-area button {
+        width: 100%;
+    }
+
+    /* Grid */
+    .prompt-grid {
+        grid-template-columns: repeat(2, 1fr) !important;
+        gap: 15px;
+    }
+
+    .prompt-card {
+        padding: 18px;
+    }
+
+    /* Footer */
+    .app-footer {
+        flex-direction: column-reverse;
+        text-align: center;
+        padding: 30px 20px 100px 20px;
+        /* Space for FAB */
     }
 
     .footer-links {
         justify-content: center;
         margin-top: 10px;
+        gap: 20px;
+    }
+}
+
+/* Small Tablets & Large Phones - 600px */
+@media (max-width: 600px) {
+    .controls {
+        grid-template-columns: 1fr;
+    }
+
+    .search-box,
+    .custom-dropdown,
+    #auth-profile-slot {
+        width: 100%;
+    }
+
+    /* Shared View Mobile Fixes */
+    .shared-card-wrapper {
+        padding: 25px;
+    }
+
+    .shared-header {
+        margin-bottom: 15px;
+    }
+
+    /* Auth Card Mobile Fixes */
+    .auth-card {
+        padding: 30px 20px;
+    }
+
+    .otp-input {
+        width: 40px;
+        height: 50px;
+        font-size: 1.2rem;
+    }
+}
+
+/* Phones (Standard) - 480px */
+@media (max-width: 480px) {
+
+    /* 1 Column Grid */
+    .prompt-grid {
+        grid-template-columns: 1fr !important;
+    }
+
+    .prompt-card {
+        padding: 16px;
+    }
+
+    /* Full-screen capable Modal */
+    .modal {
+        width: 95%;
+        padding: 20px;
+        max-height: 95vh;
+        margin: 10px auto;
+    }
+
+    .modal-header h2 {
+        font-size: 1.25rem;
+    }
+
+    .form-actions {
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .form-actions button {
+        width: 100%;
+    }
+
+    /* Storage Select - Stack */
+    .storage-selection {
+        flex-direction: column;
+    }
+
+    /* Fabric Action Button - Mobile Adjust */
+    .fab {
+        bottom: 25px;
+        right: 25px;
+        width: 56px;
+        height: 56px;
+    }
+
+    /* Logo Area */
+    .logo-area h1 {
+        font-size: 1.2rem;
+    }
+}
+
+/* Ultra Small Phones - 360px */
+@media (max-width: 360px) {
+    body {
+        padding: 10px;
+    }
+
+    .logo-area svg {
+        width: 20px;
+        height: 20px;
     }
 }
 
@@ -1875,95 +2057,7 @@ body.dark-mode .auth-footer {
     background: linear-gradient(to bottom right, var(--bg-card), rgba(var(--primary-rgb), 0.03));
 }
 
-/* Mobile Responsiveness (Modern App Polish) */
-@media (max-width: 768px) {
-
-    /* 1. Prompt Cards: 2-column grid */
-    .prompt-grid {
-        grid-template-columns: repeat(2, 1fr);
-        /* Force 2 columns */
-        gap: 12px;
-        /* Tighter gap */
-    }
-
-    .prompt-card {
-        padding: 15px;
-        /* Reduce padding inside cards */
-    }
-
-    /* 2. Footer: Clean stack, links first */
-    .app-footer {
-        flex-direction: column-reverse;
-        /* Links on top, text bottom */
-        padding: 20px 15px;
-        text-align: center;
-        gap: 15px;
-        padding-bottom: 80px;
-        /* Accounts for FAB */
-    }
-
-    .footer-links {
-        justify-content: center;
-        width: 100%;
-        gap: 25px;
-    }
-
-    .footer-text {
-        font-size: 0.85rem;
-        opacity: 0.8;
-    }
-
-    /* 3. About Section: Compact & Vertical Rhythm */
-    .about-section {
-        padding: 40px 20px;
-        margin-top: 20px;
-        margin-bottom: 20px;
-    }
-
-    .about-section h2 {
-        font-size: 1.6rem;
-    }
-
-    .features-grid {
-        grid-template-columns: 1fr;
-        /* Stack features vertically */
-        gap: 20px;
-    }
-
-    .feature-item {
-        padding: 20px;
-    }
-
-    /* 4. Controls/Header Polish */
-    header {
-        padding: 15px;
-        gap: 15px;
-    }
-
-    .controls {
-        width: 100%;
-        justify-content: space-between;
-    }
-
-    .search-box {
-        flex-grow: 1;
-        width: auto;
-    }
-
-    #searchInput {
-        width: 100%;
-    }
-
-    /* Dropdowns shouldn't overflow */
-    .custom-dropdown {
-        max-width: 48%;
-        /* prevent crowding */
-    }
-
-    .logo-area h1 {
-        font-size: 1.3rem;
-    }
-}
+/* Cleaned up redundant media queries - handled in Responsive Overhaul section */
 
 /* Extra Small Screens (<= 400px) - Safety */
 @media (max-width: 400px) {
@@ -2550,4 +2644,374 @@ body.dark-mode .var-select-preview .word-token.selected {
 .var-select-preview .newline {
     display: block;
     height: 8px;
+}
+
+/* --- Show More / Row Limitation --- */
+.show-more-container {
+    display: flex;
+    justify-content: center;
+    margin-top: 30px;
+    margin-bottom: 50px;
+    width: 100%;
+}
+
+.show-more-container.hidden {
+    display: none;
+}
+
+.load-more-btn {
+    background: var(--glass-bg);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--glass-border);
+    border-radius: 25px;
+    padding: 12px 30px;
+    color: var(--primary-color);
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: var(--glass-shadow);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: inherit;
+}
+
+.load-more-btn:hover {
+    transform: translateY(-2px);
+    background: rgba(255, 255, 255, 0.9);
+    border-color: var(--primary-color);
+    box-shadow: 0 6px 20px rgba(74, 144, 226, 0.2);
+}
+
+body.dark-mode .load-more-btn {
+    background: rgba(40, 40, 40, 0.8);
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+body.dark-mode .load-more-btn:hover {
+    background: rgba(50, 50, 50, 0.95);
+    border-color: var(--primary-color);
+}
+
+.load-more-btn svg {
+    transition: transform 0.3s ease;
+}
+
+.load-more-btn.expanded svg {
+    transform: rotate(180deg);
+}
+
+/* Onboarding Slider Styles */
+.onboarding-bg-blobs {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 100;
+    overflow: hidden;
+}
+
+.onboarding-bg-blobs .blob {
+    position: absolute;
+    width: 400px;
+    height: 400px;
+    border-radius: 50%;
+    filter: blur(80px);
+    opacity: 0.15;
+    animation: blob-float 20s infinite alternate;
+}
+
+.blob-1 {
+    background: var(--primary-color);
+    top: 10%;
+    left: 20%;
+}
+
+.blob-2 {
+    background: #6c5ce7;
+    bottom: 10%;
+    right: 20%;
+    animation-delay: -5s !important;
+}
+
+@keyframes blob-float {
+    0% {
+        transform: translate(0, 0) scale(1);
+    }
+
+    100% {
+        transform: translate(100px, 50px) scale(1.2);
+    }
+}
+
+.onboarding-modal {
+    width: 90%;
+    max-width: 600px;
+    max-height: 95vh;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    position: relative;
+    border-radius: 24px;
+    text-align: center;
+    background: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(25px);
+    -webkit-backdrop-filter: blur(25px);
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    box-shadow: 0 30px 60px rgba(0, 0, 0, 0.15);
+    z-index: 101;
+}
+
+.slide-badge {
+    display: inline-block;
+    padding: 6px 12px;
+    background: rgba(74, 144, 226, 0.1);
+    color: var(--primary-color);
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-top: 30px;
+    opacity: 0;
+    transform: scale(0.8);
+    transition: all 0.5s ease 0.1s;
+}
+
+.onboarding-slide.active .slide-badge {
+    opacity: 1;
+    transform: scale(1);
+}
+
+.skip-btn {
+    position: absolute;
+    top: 24px;
+    right: 24px;
+    background: rgba(0, 0, 0, 0.05);
+    border: none;
+    color: var(--text-color);
+    padding: 6px 14px;
+    border-radius: 12px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    z-index: 10;
+    transition: all 0.3s;
+}
+
+.skip-btn:hover {
+    background: rgba(0, 0, 0, 0.1);
+}
+
+.onboarding-slider {
+    padding: 20px 40px 40px;
+    overflow: hidden;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.onboarding-slides {
+    display: flex;
+    transition: transform 0.6s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.onboarding-slide {
+    min-width: 100%;
+}
+
+.slide-visual {
+    height: 240px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-bottom: 25px;
+    position: relative;
+    overflow: visible;
+}
+
+.onboarding-img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    border-radius: 20px;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+    /* Energetic Pop Animation */
+    opacity: 0;
+    transform: scale(0.7) rotate(-2deg);
+    transition: all 0.7s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.onboarding-slide.active .onboarding-img {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+}
+
+.onboarding-slide h2 {
+    font-size: 2.2rem;
+    margin-bottom: 12px;
+    color: var(--text-color);
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    opacity: 0;
+    transform: translateY(20px);
+    transition: all 0.6s ease 0.3s;
+}
+
+.onboarding-slide p {
+    font-size: 1.15rem;
+    color: var(--text-color);
+    opacity: 0.7;
+    line-height: 1.6;
+    margin: 0 auto;
+    max-width: 440px;
+    opacity: 0;
+    transform: translateY(20px);
+    transition: all 0.6s ease 0.4s;
+}
+
+.onboarding-slide.active h2,
+.onboarding-slide.active p {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+/* Onboarding Controls */
+.onboarding-controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 40px 40px;
+}
+
+.nav-btn {
+    background: rgba(0, 0, 0, 0.03);
+    border: 1px solid rgba(0, 0, 0, 0.05);
+    border-radius: 14px;
+    width: 48px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--primary-color);
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.nav-btn:hover:not(:disabled) {
+    background: var(--primary-color);
+    color: white;
+    transform: scale(1.1);
+}
+
+.nav-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+.progress-dots {
+    display: flex;
+    gap: 8px;
+}
+
+.dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.1);
+    cursor: pointer;
+    transition: all 0.4s ease;
+}
+
+.dot.active {
+    background: var(--primary-color);
+    width: 28px;
+    border-radius: 5px;
+}
+
+.finish-btn {
+    margin-top: 30px;
+    padding: 14px 40px;
+    font-size: 1.1rem;
+    border-radius: 16px;
+    box-shadow: 0 10px 25px rgba(74, 144, 226, 0.3);
+}
+
+/* DARK MODE REFINEMENTS */
+body.dark-mode .onboarding-modal {
+    background: rgba(25, 25, 25, 0.85);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 40px 80px rgba(0, 0, 0, 0.4);
+}
+
+body.dark-mode .onboarding-bg-blobs .blob {
+    opacity: 0.25;
+}
+
+body.dark-mode .nav-btn {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.05);
+}
+
+body.dark-mode .dot {
+    background: rgba(255, 255, 255, 0.15);
+}
+
+body.dark-mode .skip-btn {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+body.dark-mode .slide-badge {
+    background: rgba(74, 144, 226, 0.2);
+}
+
+body.dark-mode .onboarding-img {
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+}
+
+/* Mobile Onboarding Fixes */
+@media (max-width: 600px) {
+    .onboarding-modal {
+        width: 95%;
+        border-radius: 16px;
+    }
+
+    .onboarding-slider {
+        padding: 10px 20px 30px;
+    }
+
+    .slide-visual {
+        height: 180px;
+        margin-bottom: 15px;
+    }
+
+    .onboarding-slide h2 {
+        font-size: 1.6rem;
+    }
+
+    .onboarding-slide p {
+        font-size: 1rem;
+    }
+
+    .onboarding-controls {
+        padding: 0 20px 30px;
+    }
+
+    .nav-btn {
+        width: 40px;
+        height: 40px;
+    }
+
+    .skip-btn {
+        top: 15px;
+        right: 15px;
+        padding: 4px 10px;
+    }
+
+    .slide-badge {
+        margin-top: 20px;
+    }
 }

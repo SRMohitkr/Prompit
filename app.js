@@ -7,18 +7,21 @@
 create table if not exists public.profiles (
   id uuid references auth.users on delete cascade primary key,
   email text,
+  onboarding_completed boolean default false,
   last_login timestamp with time zone,
   created_at timestamp with time zone default now()
 );
 alter table public.profiles enable row level security;
-create policy "Users can view own profile" on profiles for select using (auth.uid() = id);
-create policy "Users can update own profile" on profiles for update using (auth.uid() = id);
+create policy "Users can view own profile" on profiles for select using ((select auth.uid()) = id);
+create policy "Users can update own profile" on profiles for update using ((select auth.uid()) = id);
+create policy "Users can insert own profile" on profiles for insert with check ((select auth.uid()) = id);
 
 -- 2. Create or Update prompt_saves table
 create table if not exists public.prompt_saves (
   id uuid primary key default gen_random_uuid(),
   user_id uuid references auth.users(id),
   device_id text,
+  client_mutation_id text unique,
   title text,
   body text,
   tags text,
@@ -26,7 +29,8 @@ create table if not exists public.prompt_saves (
   favorite boolean default false,
   total_usage integer default 0,
   last_used_at timestamp with time zone,
-  created_at timestamp with time zone default now()
+  created_at timestamp with time zone default now(),
+  updated_at timestamp with time zone default now()
 );
 
 -- Ensure columns are TEXT and exist (Idempotent Migration)
@@ -48,6 +52,15 @@ begin
 
   if not exists (select 1 from information_schema.columns where table_name = 'prompt_saves' and column_name = 'updated_at') then
      alter table public.prompt_saves add column updated_at timestamp with time zone default now();
+  end if;
+
+  if not exists (select 1 from information_schema.columns where table_name = 'prompt_saves' and column_name = 'client_mutation_id') then
+     alter table public.prompt_saves add column client_mutation_id text;
+     alter table public.prompt_saves add constraint prompt_saves_client_mutation_id_key unique (client_mutation_id);
+  end if;
+
+  if not exists (select 1 from information_schema.columns where table_name = 'prompt_saves' and column_name = 'folder_id') then
+     alter table public.prompt_saves add column folder_id uuid references public.folders(id) on delete set null;
   end if;
 end $$;
 
@@ -87,16 +100,19 @@ alter table public.device_metadata alter column device_id type text;
 
 create policy "Users and Devices can manage their own prompts" on prompt_saves
   for all using (
-    (auth.uid() = user_id) OR 
-    (device_id = current_setting('request.headers', true)::json->>'x-device-id') OR
-    (role = 'anon')
+    ((select auth.uid()) = user_id) OR 
+    (device_id = (select current_setting('request.headers', true)::json->>'x-device-id')) OR
+    ((select auth.role()) = 'anon')
   );
 
 create policy "Devices can manage metadata" on device_metadata
   for all using (
-    (device_id = current_setting('request.headers', true)::json->>'x-device-id') OR
-    (role = 'anon')
+    (device_id = (select current_setting('request.headers', true)::json->>'x-device-id')) OR
+    ((select auth.role()) = 'anon')
   );
+
+create policy "Authenticated users can insert tags" on tags
+  for insert with check ((select auth.role()) = 'authenticated');
 
 create policy "Allow public read access to tags" on tags
   for select using (true);
@@ -105,7 +121,8 @@ create policy "Allow public read access to tags" on tags
 -- 6. Folder System Support
 create table if not exists public.folders (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid references auth.users(id) not null,
+  user_id uuid references auth.users(id), -- Nullable for Guest Mode
+  device_id text,                         -- Added for Guest Mode
   name text not null,
   created_at timestamp with time zone default now()
 );
@@ -113,25 +130,36 @@ create table if not exists public.folders (
 -- RLS for Folders
 alter table public.folders enable row level security;
 
-create policy "Users can view own folders" on folders
-  for select using (auth.uid() = user_id);
+create policy "Users and Devices can view own folders" on folders
+  for select using (
+    ((select auth.uid()) = user_id) OR 
+    (device_id = (select current_setting('request.headers', true)::json->>'x-device-id')) OR
+    ((select auth.role()) = 'anon')
+  );
 
-create policy "Users can create own folders" on folders
-  for insert with check (auth.uid() = user_id);
+create policy "Users and Devices can create own folders" on folders
+  for insert with check (
+    ((select auth.uid()) = user_id) OR 
+    (device_id = (select current_setting('request.headers', true)::json->>'x-device-id')) OR
+    ((select auth.role()) = 'anon')
+  );
 
-create policy "Users can update own folders" on folders
-  for update using (auth.uid() = user_id);
+create policy "Users and Devices can update own folders" on folders
+  for update using (
+    ((select auth.uid()) = user_id) OR 
+    (device_id = (select current_setting('request.headers', true)::json->>'x-device-id')) OR
+    ((select auth.role()) = 'anon')
+  );
 
-create policy "Users can delete own folders" on folders
-  for delete using (auth.uid() = user_id);
+create policy "Users and Devices can delete own folders" on folders
+  for delete using (
+    ((select auth.uid()) = user_id) OR 
+    (device_id = (select current_setting('request.headers', true)::json->>'x-device-id')) OR
+    ((select auth.role()) = 'anon')
+  );
 
--- Add folder_id to prompt_saves
-do $$
-begin
-  if not exists (select 1 from information_schema.columns where table_name = 'prompt_saves' and column_name = 'folder_id') then
-     alter table public.prompt_saves add column folder_id uuid references public.folders(id) on delete set null;
-  end if;
-end $$;
+-- Add folder_id to prompt_saves (Handled in main migration block)
+
 
 -- 7. Shared Prompts (Immutable Link Snapshots)
 create table if not exists public.shared_prompts (
@@ -156,7 +184,20 @@ create policy "Allow creation of shared prompts" on shared_prompts
 
 -- Only Author Can Delete (Revoke)
 create policy "Users can delete their own shared links" on shared_prompts
-  for delete using (auth.uid() = original_author_id);
+  for delete using (((select auth.uid()) = original_author_id));
+
+
+-- 8. Performance Indexes (Linter Fixes)
+-- Foreign Keys
+create index if not exists idx_folders_user_id on public.folders(user_id);
+create index if not exists idx_prompt_saves_user_id on public.prompt_saves(user_id);
+create index if not exists idx_prompt_saves_folder_id on public.prompt_saves(folder_id);
+create index if not exists idx_shared_prompts_original_author_id on public.shared_prompts(original_author_id);
+
+-- Performance columns (used in RLS)
+create index if not exists idx_folders_device_id on public.folders(device_id);
+create index if not exists idx_prompt_saves_device_id on public.prompt_saves(device_id);
+create index if not exists idx_device_metadata_device_id on public.device_metadata(device_id);
 
 =====================================================
 */
@@ -190,22 +231,136 @@ try { categories = JSON.parse(localStorage.getItem('categories') || JSON.stringi
 let prompts = [];
 try { prompts = JSON.parse(localStorage.getItem('prompts') || '[]'); } catch (e) { console.error('Corrupt Prompts', e); localStorage.removeItem('prompts'); }
 
-let offlineQueue = [];
-try { offlineQueue = JSON.parse(localStorage.getItem('offlineQueue') || '[]'); } catch (e) { console.error('Corrupt Queue', e); localStorage.removeItem('offlineQueue'); }
-
-let offlineDeletes = [];
-try { offlineDeletes = JSON.parse(localStorage.getItem('offlineDeletes') || '[]'); } catch (e) { console.error('Corrupt Delete Queue', e); localStorage.removeItem('offlineDeletes'); }
+// Persisted Sync Queue
+let syncQueue = [];
+try { syncQueue = JSON.parse(localStorage.getItem('syncQueue') || '[]'); } catch (e) { console.error('Corrupt Queue', e); localStorage.removeItem('syncQueue'); }
 
 let folders = [];
 try { folders = JSON.parse(localStorage.getItem('folders') || '[]'); } catch (e) { console.error('Resetting Folders', e); localStorage.removeItem('folders'); }
 let activeFolderId = null; // null = 'All Prompts'
 
+let hasManuallySetCategory = false;
+let hasManuallySetTitle = false;
+
 console.log("App Start: Parsed Data", {
   prompts_len: prompts.length,
-  offlineQueue_len: offlineQueue.length,
-  offlineDeletes_len: offlineDeletes.length,
+  syncQueue_len: syncQueue.length,
   folders_len: folders.length
 });
+
+/**
+ * SyncService - Manages background sync operations with idempotency.
+ */
+class SyncService {
+  constructor() {
+    this.isProcessing = false;
+    this.retryBackoff = 5000; // Start with 5s
+  }
+
+  async enqueue(op) {
+    // op: { type: 'create'|'update'|'delete', local_id, payload }
+    syncQueue.push({ ...op, timestamp: Date.now() });
+    saveToLocalStorage();
+    this.process();
+  }
+
+  async process() {
+    if (this.isProcessing || !supabaseClient || syncQueue.length === 0) return;
+    this.isProcessing = true;
+
+    while (syncQueue.length > 0) {
+      const op = syncQueue[0];
+      const success = await this.executeOp(op);
+
+      if (success) {
+        syncQueue.shift();
+        saveToLocalStorage();
+        this.retryBackoff = 5000; // Reset backoff on success
+      } else {
+        console.warn("Sync failed, will retry later.", op);
+        // Exponential backoff or just wait for next trigger
+        setTimeout(() => { this.isProcessing = false; }, this.retryBackoff);
+        this.retryBackoff = Math.min(this.retryBackoff * 2, 60000); // Max 1 min
+        return;
+      }
+    }
+    this.isProcessing = false;
+  }
+
+  async executeOp(op) {
+    try {
+      if (op.type === 'create' || op.type === 'update') {
+        // Idempotent upsert using local_id as client_mutation_id
+        const { data, error } = await supabaseClient
+          .from('prompt_saves')
+          .upsert({
+            user_id: user_session?.user?.id,
+            device_id: device_id,
+            title: op.payload.title,
+            body: op.payload.body,
+            tags: Array.isArray(op.payload.tags) ? op.payload.tags.join(',') : op.payload.tags,
+            category: op.payload.category,
+            favorite: op.payload.favorite,
+            folder_id: op.payload.folder_id,
+            client_mutation_id: op.local_id, // Key for idempotency
+            updated_at: new Date().toISOString()
+          }, {
+            onConflict: 'client_mutation_id',
+            ignoreDuplicates: false
+          })
+          .select()
+          .single();
+
+        if (error) throw error;
+
+        // Update local mirror state
+        const promptIndex = prompts.findIndex(p => p.id === op.local_id);
+        if (promptIndex > -1) {
+          prompts[promptIndex].cloud_id = data.id;
+          prompts[promptIndex].status = 'synced';
+          prompts[promptIndex].is_guest_data = false;
+          saveToLocalStorage();
+          renderPrompts(searchInput?.value, currentFilter);
+        }
+      } else if (op.type === 'delete') {
+        const { error } = await supabaseClient
+          .from('prompt_saves')
+          .delete()
+          .eq('client_mutation_id', op.local_id);
+
+        if (error) throw error;
+      }
+      return true;
+    } catch (err) {
+      console.error("Sync Exception:", err);
+      // Mark local as error if item still exists
+      const p = prompts.find(p => p.id === op.local_id);
+      if (p) p.status = 'error';
+      return false;
+    }
+  }
+
+  /**
+   * Migrate guest items to cloud
+   */
+  async migrateGuestData() {
+    if (!user_session) return;
+
+    const guestItems = prompts.filter(p => p.is_guest_data);
+    if (guestItems.length === 0) return;
+
+    for (const item of guestItems) {
+      // Check if already in queue to avoid duplicates
+      if (!syncQueue.find(op => op.local_id === item.id)) {
+        item.status = 'syncing';
+        item.user_id = user_session.user.id;
+        this.enqueue({ type: 'create', local_id: item.id, payload: item });
+      }
+    }
+  }
+}
+
+const syncService = new SyncService();
 
 
 if (SUPABASE_URL && SUPABASE_KEY) {
@@ -215,6 +370,8 @@ if (SUPABASE_URL && SUPABASE_KEY) {
 } else {
   console.warn("Supabase credentials missing in cloudConfig.js");
 }
+
+let isGridExpanded = false;
 
 // ---------- DOM Elements ----------
 const grid = document.getElementById('promptGrid');
@@ -279,6 +436,19 @@ async function initApp() {
     renderCategories();
     renderFolderStream();
 
+    // Data Normalization (One-time migration for legacy objects)
+    let needsSave = false;
+    prompts.forEach(p => {
+      if (p.is_guest_data === undefined) {
+        // If it was local and not synced, it's guest data
+        p.is_guest_data = !p.cloud_id;
+        p.status = p.cloud_id ? 'synced' : 'local-only';
+        p.user_id = p.user_id || null;
+        needsSave = true;
+      }
+    });
+    if (needsSave) saveToLocalStorage();
+
     // RENDER FAST: Show local prompts immediately for LCP
     renderPrompts();
 
@@ -312,6 +482,19 @@ async function initApp() {
         if (event === 'SIGNED_IN' && session) {
           updateAuthUI();
           renderUserProfile(session.user);
+
+          // Ensure profile exists in DB
+          try {
+            await supabaseClient.from('profiles').upsert({
+              id: session.user.id,
+              email: session.user.email,
+              last_login: new Date().toISOString()
+            });
+
+            // Always show onboarding after a fresh SIGNED_IN event
+            onboardingManager.show();
+          } catch (e) { console.warn("Profile sync failed", e); }
+
           await migratePromptsToUser(session.user.id);
           await syncData();
           hideAuthOverlay();
@@ -336,17 +519,15 @@ async function initApp() {
 // (Moved debug assignments to EOF)
 
 async function syncData() {
-  // 1. Process local deletions first (crucial to avoid resurrecting dead prompts)
-  await syncOfflineDeletes();
+  // New unified sync flow
+  syncService.process();
 
-  // 2. Process local creations/edits
-  await syncOfflineQueue();
-
-  // 3. Sync metadata
+  // Sync folders & metadata
+  await syncLocalFoldersToCloud();
   await loadCategoriesFromCloud();
   await syncFolders();
 
-  // 4. Merge cloud data (Last Write Wins)
+  // Merge cloud data (Last Write Wins)
   await loadPromptsFromSupabaseAndMerge();
 
   setupRealtime();
@@ -537,30 +718,28 @@ function setLoading(btnElement, isLoading) {
 
 // ---------- Migration Logic ----------
 async function migratePromptsToUser(userId) {
-  if (!supabaseClient || !device_id) return;
+  if (!supabaseClient) return;
 
-  // 1. Fetch prompts linked to device_id that have NO user_id
-  const { data: devicePrompts, error } = await supabaseClient
-    .from('prompt_saves')
-    .select('id')
-    .eq('device_id', device_id)
-    .is('user_id', null);
+  console.log("Starting Migration...");
 
-  if (error || !devicePrompts || devicePrompts.length === 0) return;
+  // 1. Migrate Local Guest Data
+  await syncService.migrateGuestData();
 
-  const idsToMigrate = devicePrompts.map(p => p.id);
+  // 2. Fallback: Server-side migration for orphaned device data
+  if (device_id) {
+    const { data: devicePrompts, error } = await supabaseClient
+      .from('prompt_saves')
+      .select('id')
+      .eq('device_id', device_id)
+      .is('user_id', null);
 
-  // 2. Update them to set user_id
-  const { error: updateError } = await supabaseClient
-    .from('prompt_saves')
-    .update({ user_id: userId })
-    .in('id', idsToMigrate);
-
-  if (updateError) {
-    console.warn('Migration failed', updateError);
-  } else {
-    console.log(`Migrated ${idsToMigrate.length} prompts to user.`);
-    showToast(`Synced ${idsToMigrate.length} prompts to account!`);
+    if (!error && devicePrompts && devicePrompts.length > 0) {
+      const idsToMigrate = devicePrompts.map(p => p.id);
+      await supabaseClient
+        .from('prompt_saves')
+        .update({ user_id: userId })
+        .in('id', idsToMigrate);
+    }
   }
 }
 
@@ -604,11 +783,38 @@ function setupEventListeners() {
     const bodyVal = document.getElementById('body').value;
     if (!bodyVal) return showToast('Enter a prompt first!');
     const analysis = analyzePrompt(bodyVal);
+
+    // Explicitly update even if manually set (since user clicked the button)
     document.getElementById('title').value = analysis.title;
-    // Set category using custom event to update dropdown UI
     updateCategoryDropdownUI(modalCategoryDropdown, analysis.category);
     if (window.tagManager) window.tagManager.reset(analysis.tags);
+
+    hasManuallySetCategory = true;
+    hasManuallySetTitle = true;
+    showToast(`Detected: ${capitalize(analysis.category)}`);
   });
+
+  // LIVE Auto-detection as user types
+  document.getElementById('body').addEventListener('input', (e) => {
+    const text = e.target.value.trim();
+    if (text.length < 10) return; // Wait for enough context
+
+    const analysis = analyzePrompt(text);
+
+    // Auto-update category if not manually touched
+    if (!hasManuallySetCategory) {
+      updateCategoryDropdownUI(modalCategoryDropdown, analysis.category);
+    }
+
+    // Auto-update title if not manually touched
+    if (!hasManuallySetTitle && text.length < 100) {
+      const gTitle = autoGenerateTitle(text);
+      document.getElementById('title').value = gTitle;
+    }
+  });
+
+  // Track manual overrides
+  document.getElementById('title').addEventListener('input', () => { hasManuallySetTitle = true; });
 
   // Form Submit
   promptForm.addEventListener('submit', handleFormSubmit);
@@ -636,18 +842,11 @@ function setupEventListeners() {
   setupCustomDropdown(customCategoryDropdown, (val) => {
     currentFilter = val;
     renderPrompts(searchInput.value, currentFilter);
-
-    // Visual Active State
-    const selectedEl = customCategoryDropdown.querySelector('.dropdown-selected');
-    if (val !== 'all') {
-      selectedEl.classList.add('active-filter');
-    } else {
-      selectedEl.classList.remove('active-filter');
-    }
   });
 
   setupCustomDropdown(modalCategoryDropdown, (val) => {
     document.getElementById('category').value = val;
+    hasManuallySetCategory = true; // User manually chose something
     // Check if "New Category"
     if (val === 'add_new') {
       const newCat = prompt("Enter new category name:");
@@ -695,6 +894,26 @@ function setupEventListeners() {
       savePromptFinal(lastPendingPrompt);
     };
   }
+
+  // Row Limitation Toggle
+  const loadMoreBtn = document.getElementById('loadMoreBtn');
+  if (loadMoreBtn) {
+    loadMoreBtn.addEventListener('click', () => {
+      isGridExpanded = !isGridExpanded;
+      renderPrompts(searchInput.value, currentFilter);
+      // Wait for render then scroll slightly if expanding?
+      if (isGridExpanded) {
+        // Optional: smooth scroll or focus
+      }
+    });
+  }
+
+  // Re-calculate visible rows on resize to keep exactly 3 rows if not expanded
+  window.addEventListener('resize', () => {
+    if (!isGridExpanded && resultsForResizeCheck > 0) {
+      renderPrompts(searchInput.value, currentFilter);
+    }
+  });
 }
 
 function hideTemplateChoiceModal() {
@@ -864,12 +1083,9 @@ async function handleFormSubmit(e) {
   const category = document.getElementById('category').value || 'other';
   let body = document.getElementById('body').value;
 
-  // VERBATIM SAVE (Conversion moved to Copy)
-
   const tags = document.getElementById('tags').value.split(',').map(t => t.trim()).filter(Boolean);
-  const storageType = document.querySelector('input[name="storageType"]:checked')?.value || 'cloud';
 
-  // Robustly find existing prompt, handling String/Number ID mismatch
+  // Robustly find existing prompt
   let existingPrompt = null;
   if (id) {
     existingPrompt = prompts.find(p => String(p.id) === String(id));
@@ -881,21 +1097,22 @@ async function handleFormSubmit(e) {
     category,
     body,
     tags,
-    date: existingPrompt ? existingPrompt.date : new Date().toISOString(), // Keep creation date
-    updated_at: new Date().toISOString(), // TIMESTAMP for Last Write Wins
+    date: existingPrompt ? existingPrompt.date : new Date().toISOString(),
+    updated_at: new Date().toISOString(),
     favorite: existingPrompt ? existingPrompt.favorite : false,
-    cloud_id: existingPrompt ? existingPrompt.cloud_id : undefined,
+    cloud_id: existingPrompt ? existingPrompt.cloud_id : null,
     folder_id: document.getElementById('folder') ? (document.getElementById('folder').value || null) : null,
-    storage: storageType
+    // Implicit status & guest tracking
+    user_id: user_session ? user_session.user.id : null,
+    status: user_session ? 'syncing' : 'local-only',
+    is_guest_data: !user_session
   };
 
   if (id) {
     const index = prompts.findIndex(p => String(p.id) === String(id));
     if (index > -1) {
-      // Merge updates while preserving other fields
       prompts[index] = { ...prompts[index], ...promptData };
     } else {
-      // Fallback if ID exists in form but not found in array (should be rare)
       prompts.unshift(promptData);
     }
   } else {
@@ -903,12 +1120,12 @@ async function handleFormSubmit(e) {
   }
 
   saveToLocalStorage();
-  renderPrompts();
+  renderPrompts(searchInput?.value, currentFilter);
   closeModal();
-  showToast('Prompt saved and variables detected!');
+  showToast('Prompt saved!');
 
-  if (storageType === 'cloud') {
-    await savePromptToSupabase(promptData);
+  if (user_session) {
+    syncService.enqueue({ type: 'create', local_id: promptData.id, payload: promptData });
   }
   if (window.tagManager) await window.tagManager.syncTagsToCloud();
 }
@@ -919,8 +1136,6 @@ function handleQuickAdd() {
   let text = quickPaste.value.trim();
   if (!text) return;
 
-  // VERBATIM SAVE (Conversion moved to Copy)
-
   const analysis = analyzePrompt(text);
   const newPrompt = {
     id: crypto.randomUUID(),
@@ -929,17 +1144,24 @@ function handleQuickAdd() {
     body: text,
     tags: analysis.tags,
     date: new Date().toISOString(),
-    updated_at: new Date().toISOString(), // TIMESTAMP
+    updated_at: new Date().toISOString(),
     favorite: analysis.isLikelyFavorite,
-    storage: 'local', // keep local default for quick save
-    folder_id: activeFolderId
+    folder_id: activeFolderId,
+    // Implicit status
+    user_id: user_session ? user_session.user.id : null,
+    status: user_session ? 'syncing' : 'local-only',
+    is_guest_data: !user_session
   };
 
   prompts.unshift(newPrompt);
   saveToLocalStorage();
-  renderPrompts();
+  renderPrompts(searchInput?.value, currentFilter);
   quickPaste.value = '';
-  showToast('Saved locally with auto-variables!');
+  showToast('Saved!');
+
+  if (user_session) {
+    syncService.enqueue({ type: 'create', local_id: newPrompt.id, payload: newPrompt });
+  }
   if (window.tagManager) window.tagManager.syncTagsToCloud(newPrompt.tags);
 }
 
@@ -952,30 +1174,12 @@ async function deletePrompt(id) {
   // 1. Remove Locally IMMEDIATELY
   prompts = prompts.filter(p => String(p.id) !== String(id));
   saveToLocalStorage();
-  renderPrompts();
+  renderPrompts(searchInput?.value, currentFilter);
   showToast("Deleted");
 
-  // 2. Handle Cloud / Offline Queue
-  if (prompt.cloud_id) {
-    if (supabaseClient) {
-      // Try direct delete
-      let query = supabaseClient.from("prompt_saves").delete().eq("id", prompt.cloud_id);
-
-      if (user_session) {
-        query = query.eq('user_id', user_session.user.id);
-      } else {
-        query = query.eq('device_id', device_id);
-      }
-
-      const { error } = await query;
-      if (error) {
-        console.warn("Cloud delete failed, queuing:", error);
-        queueOfflineDelete(prompt.cloud_id);
-      }
-    } else {
-      // Offline -> Queue
-      queueOfflineDelete(prompt.cloud_id);
-    }
+  // 2. Handle Cloud Sync
+  if (user_session) {
+    syncService.enqueue({ type: 'delete', local_id: id });
   }
 }
 
@@ -986,135 +1190,24 @@ function queueOfflineDelete(cloudId) {
   }
 }
 
-async function syncOfflineDeletes() {
-  if (!supabaseClient || offlineDeletes.length === 0) return;
-  console.log("Syncing offline deletes...", offlineDeletes);
-
-  // Copy queue to process
-  const toDelete = [...offlineDeletes];
-
-  // We can do this in bulk or one by one. Bulk is safer/faster.
-  // Using 'in' clause.
-  let query = supabaseClient.from('prompt_saves').delete().in('id', toDelete);
-
-  if (user_session) {
-    query = query.eq('user_id', user_session.user.id);
-  } else {
-    query = query.eq('device_id', device_id);
-  }
-
-  const { error } = await query;
-
-  if (!error) {
-    // Success - clear queue
-    offlineDeletes = [];
-    localStorage.setItem('offlineDeletes', '[]');
-    console.log("Offline deletes synced.");
-  } else {
-    console.error("Failed to sync offline deletes", error);
-  }
-}
+// Obsolete deletion sync removed. Replaced by syncService.
 
 async function toggleFavorite(id) {
   const p = prompts.find(x => String(x.id) === String(id));
   if (!p) return;
 
   p.favorite = !p.favorite;
-  p.updated_at = new Date().toISOString(); // Update timestamp
+  p.updated_at = new Date().toISOString();
   saveToLocalStorage();
-  renderPrompts(); // Optimistic
+  renderPrompts(searchInput?.value, currentFilter);
 
-  if (p.cloud_id && supabaseClient) {
-    let query = supabaseClient.from('prompt_saves').update({
-      favorite: p.favorite,
-      updated_at: p.updated_at
-    }).eq('id', p.cloud_id);
-
-    // RLS: Add correct filter
-    if (user_session) {
-      query = query.eq('user_id', user_session.user.id);
-    } else {
-      query = query.eq('device_id', device_id);
-    }
-
-    const { error } = await query;
-    if (error) {
-      console.error("Cloud fav update failed:", error);
-      queueOffline(p);
-    }
-  } else {
-    savePromptToSupabase(p);
+  if (user_session) {
+    syncService.enqueue({ type: 'update', local_id: p.id, payload: p });
   }
 }
 
 // ---------- Supabase Logic (Updated) ----------
-async function savePromptToSupabase(prompt) {
-  // If explicitly local and not already on cloud, skip
-  if (prompt.storage === 'local' && !prompt.cloud_id) {
-    return null;
-  }
-
-  if (!supabaseClient) {
-    queueOffline(prompt);
-    return null;
-  }
-
-  const categoryVal = prompt.category || 'other';
-  const tagsStr = Array.isArray(prompt.tags) ? prompt.tags.join(",") : (prompt.tags || "");
-
-  const payload = {
-    title: prompt.title,
-    body: prompt.body,
-    tags: tagsStr,
-    favorite: !!prompt.favorite,
-    category: categoryVal,
-    folder_id: prompt.folder_id || null, // Folder support
-    user_id: user_session ? user_session.user.id : null,
-    device_id: device_id,
-    updated_at: prompt.updated_at || new Date().toISOString() // Send client timestamp
-  };
-
-  try {
-    if (prompt.cloud_id) {
-      // UPDATE
-      let query = supabaseClient.from("prompt_saves").update(payload).eq('id', prompt.cloud_id);
-
-      // RLS Safety Check
-      if (user_session) {
-        query = query.eq('user_id', user_session.user.id);
-      } else {
-        query = query.eq('device_id', device_id);
-      }
-
-      const { data, error } = await query.select().single();
-
-      if (error) throw error;
-      return data;
-    } else {
-      // INSERT
-      const { data, error } = await supabaseClient
-        .from("prompt_saves")
-        .insert([payload])
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      // Update local
-      const localIdx = prompts.findIndex(p => p.id === prompt.id);
-      if (localIdx > -1) {
-        prompts[localIdx].cloud_id = data.id;
-        prompts[localIdx].storage = 'cloud'; // Mark as cloud since it's now synced
-        saveToLocalStorage();
-      }
-      return data;
-    }
-  } catch (err) {
-    console.error("savePromptToSupabase error:", err);
-    queueOffline(prompt);
-    return null;
-  }
-}
+// Obsolete savePromptToSupabase removed. Replaced by syncService.
 
 async function loadPromptsFromSupabaseAndMerge() {
   if (!supabaseClient) return;
@@ -1178,17 +1271,18 @@ async function loadPromptsFromSupabaseAndMerge() {
         const cloudTime = new Date(cloudP.updated_at).getTime();
 
         if (localTime > cloudTime) {
-          // Local is newer. Keep Local.
-          // Needs Push to Cloud (handled by offlineQueue or next edit)
-          // For now, we just keep local state. 
-          // Ideally we should add to offlineQueue to ensure sync?
-          // Actually, if we just keep it local, next syncData won't push it unless modified.
-          // Let's add it to offlineQueue so it pushes eventual consistency!
+          // Local is newer. Keep Local and queue sync.
           console.log(`Conflict: Local (${localTime}) > Cloud (${cloudTime}). Keeping Local & Queuing.`);
-          queueOffline(localP);
+          localP.status = 'syncing';
+          localP.is_guest_data = false; // It's cloud-linked now
           mergedPrompts.push(localP);
+          if (user_session) {
+            syncService.enqueue({ type: 'update', local_id: localP.id, payload: localP });
+          }
         } else {
           // Cloud is newer or equal. Accept Cloud.
+          cloudP.status = 'synced';
+          cloudP.is_guest_data = false;
           mergedPrompts.push(cloudP);
         }
         // Remove from cloudMap so we don't add it again as "new from cloud"
@@ -1238,7 +1332,7 @@ function renderCategories() {
   // 2. Modal Dropdown
   const modalHTML = `
         <div class="dropdown-option" data-value="other">Select Category</div>
-        ${categories.map(c => `
+        ${categories.filter(c => c !== 'other').map(c => `
             <div class="dropdown-option" data-value="${c}">${capitalize(c)}</div>
         `).join('')}
         <div class="dropdown-option" data-value="add_new" style="color:var(--primary-color); font-weight:bold;">+ Add New</div>
@@ -1278,9 +1372,17 @@ async function syncCategoriesToCloud() {
 // ---------- Folder System Logic ----------
 
 async function syncFolders() {
-  if (!supabaseClient || !user_session) return; // Only sync if logged in
+  if (!supabaseClient) return;
 
-  const { data, error } = await supabaseClient.from('folders').select('*').order('created_at');
+  let query = supabaseClient.from('folders').select('*').order('created_at');
+
+  if (user_session) {
+    query = query.eq('user_id', user_session.user.id);
+  } else {
+    query = query.eq('device_id', device_id);
+  }
+
+  const { data, error } = await query;
   if (data && !error) {
     folders = data;
     localStorage.setItem('folders', JSON.stringify(folders));
@@ -1304,10 +1406,11 @@ async function createFolder(name) {
   renderFolderStream();
   renderPrompts();
 
-  if (user_session && supabaseClient) {
+  if (supabaseClient) {
     await supabaseClient.from('folders').insert([{
       id: newFolder.id,
-      user_id: user_session.user.id,
+      user_id: user_session ? user_session.user.id : null,
+      device_id: device_id,
       name: newFolder.name
     }]);
   }
@@ -1337,10 +1440,34 @@ async function deleteFolder(id) {
   renderPrompts();
 
   // Cloud Delete
-  if (user_session && supabaseClient) {
-    await supabaseClient.from('folders').delete().eq('id', id);
+  if (supabaseClient) {
+    let query = supabaseClient.from('folders').delete().eq('id', id);
+    if (user_session) {
+      query = query.eq('user_id', user_session.user.id);
+    } else {
+      query = query.eq('device_id', device_id);
+    }
+    await query;
     // Note: SQL 'ON DELETE SET NULL' handles the prompts in cloud automatically!
   }
+}
+
+async function syncLocalFoldersToCloud() {
+  if (!supabaseClient || folders.length === 0) return;
+
+  const foldersToSync = folders.map(f => ({
+    id: f.id,
+    name: f.name,
+    user_id: f.user_id || (user_session ? user_session.user.id : null),
+    device_id: f.device_id || device_id,
+    created_at: f.created_at || new Date().toISOString()
+  }));
+
+  const { error } = await supabaseClient
+    .from('folders')
+    .upsert(foldersToSync, { onConflict: 'id', ignoreDuplicates: false });
+
+  if (error) console.error("Folder sync error", error);
 }
 
 // ---------- Folder UI Renderer ----------
@@ -1462,6 +1589,8 @@ function updateDropdownSelection(dropdown, value) {
 
 
 // ---------- Helper Functions ----------
+let resultsForResizeCheck = 0; // Global for resize listener
+
 function renderPrompts(filterText = '', categoryFilter = 'all') {
   grid.innerHTML = '';
 
@@ -1614,10 +1743,43 @@ This is your personal prompt library — built to help you think, create, and mo
     return (new Date(b.prompt.date || 0)) - (new Date(a.prompt.date || 0));
   });
 
-  // Identify absolute newest prompt
+  // Identify absolute newest prompt for the "New" badge
   const newestId = prompts.length > 0
-    ? [...prompts].sort((a, b) => new Date(b.date) - new Date(a.date))[0].id
+    ? [...prompts].sort((a, b) => new Date(b.created_at || b.date) - new Date(a.created_at || a.date))[0].id
     : null;
+
+  resultsForResizeCheck = results.length;
+
+  // --- ROW LIMITATION LOGIC ---
+  const container = document.getElementById('showMoreContainer');
+  const btn = document.getElementById('loadMoreBtn');
+  const btnText = btn?.querySelector('.btn-text');
+
+  if (container && btn && btnText) {
+    // Calculate items per row (columns)
+    // Grid uses minmax(300px, 1fr) with 25px gap
+    const gridWidth = grid.offsetWidth;
+    const cardMinWidth = 300;
+    const gap = 25;
+    const columns = Math.floor((gridWidth + gap) / (cardMinWidth + gap)) || 1;
+    const rowLimitCount = columns * 3;
+
+    if (results.length > rowLimitCount && !isGridExpanded) {
+      // Show button and slice results
+      results = results.slice(0, rowLimitCount);
+      container.classList.remove('hidden');
+      btn.classList.remove('expanded');
+      btnText.textContent = `Show More (${resultsForResizeCheck - rowLimitCount} more)`;
+    } else if (isGridExpanded && resultsForResizeCheck > rowLimitCount) {
+      // Still show button but with "Show Less" or different state
+      container.classList.remove('hidden');
+      btn.classList.add('expanded');
+      btnText.textContent = "Show Less";
+    } else {
+      // No need for button
+      container.classList.add('hidden');
+    }
+  }
 
   results.forEach((res, index) => {
     const p = res.prompt;
@@ -1682,9 +1844,6 @@ This is your personal prompt library — built to help you think, create, and mo
         <div class="card-actions">
            <button class="icon-btn fav-btn ${p.favorite ? 'active' : ''}" onclick="toggleFavorite('${p.id}')" title="Favorite">${favIcon}</button>
            <button class="icon-btn" onclick="copyPrompt('${p.id}')" title="Copy">${copyIcon}</button>
-           <button class="icon-btn" onclick="sharePrompt('${p.id}')" title="Share (Public Link)">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>
-           </button>
            <button class="icon-btn" onclick="openEditModal('${p.id}')" title="Edit">${editIcon}</button>
            <button class="icon-btn" onclick="deletePrompt('${p.id}')" title="Delete" style="color:var(--danger-color);">${trashIcon}</button>
         </div>
@@ -1692,13 +1851,18 @@ This is your personal prompt library — built to help you think, create, and mo
       <div class="category-badge" style="margin-bottom:8px;">${escapeHtml(p.category) || 'other'}</div>
       <div class="card-body">${snippetHtml}</div>
       <div class="card-footer">
-          <div class="tags-row">
-            <span class="age-text">${timeAgo(p.date)}</span>
-            <div class="tags">
-                ${tagsHtml}
-            </div>
+          <div class="footer-left">
+              <div class="tags">
+                  ${tagsHtml}
+              </div>
+              <span class="age-text">${timeAgo(p.date)}</span>
           </div>
-         ${usageText ? `<div class="usage-text">${usageText}</div>` : ''}
+          <div class="footer-right">
+              ${usageText ? `<div class="usage-text">${usageText}</div>` : ''}
+              <button class="icon-btn share-btn-footer" onclick="sharePrompt('${p.id}')" title="Share (Public Link)">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>
+              </button>
+          </div>
       </div>
     `;
     grid.appendChild(card);
@@ -1710,19 +1874,34 @@ function autoGenerateTitle(text) {
 }
 
 function analyzePrompt(text) {
-  // Simple heuristic
-  const isCode = /function|const|var|import|class|def|return/.test(text);
-  const isArt = /style|render|image|photo|4k|realistic/.test(text);
-  const isWriting = !isCode && !isArt;
+  const lowerText = text.toLowerCase();
+
+  // Refined Heuristics
+  const codeKeywords = ['function', 'const', 'var', 'import', 'class', 'def', 'return', 'fn ', 'pub ', 'using ', 'sql', 'select ', 'from ', 'where ', 'git ', 'npm ', 'docker', 'api', 'json', 'yaml'];
+  const artKeywords = ['style', 'render', 'image', 'photo', '4k', 'realistic', 'midjourney', 'stable diffusion', 'dall-e', 'painting', 'sketch', 'unreal engine', 'cinema 4d', 'bokeh', 'portrait'];
+  const writingKeywords = ['essay', 'blog', 'story', 'article', 'write', 'author', 'poem', 'fiction', 'chapter', 'outline', 'summary', 'paragraph', 'creative', 'journal'];
+
+  const isCode = codeKeywords.some(kw => lowerText.includes(kw));
+  const isArt = artKeywords.some(kw => lowerText.includes(kw));
+  const isWriting = writingKeywords.some(kw => lowerText.includes(kw));
 
   let cat = 'other';
   if (isCode) cat = 'coding';
-  if (isArt) cat = 'art';
-  if (isWriting) cat = 'writing';
+  else if (isArt) cat = 'art';
+  else if (isWriting) cat = 'writing';
+  // Fallback to writing if it's long enough and has no other triggers
+  else if (text.split(' ').length > 15) cat = 'writing';
+
+  // Smart Tag Detection
+  const tags = [];
+  if (isCode) tags.push('code');
+  if (isArt) tags.push('ai-art');
+  if (isWriting) tags.push('creative');
+  if (lowerText.includes('prompt')) tags.push('engineer');
 
   return {
     title: autoGenerateTitle(text),
-    tags: [],
+    tags: tags,
     category: cat,
     isLikelyFavorite: false
   };
@@ -1748,6 +1927,9 @@ function timeAgo(date) {
 
 function saveToLocalStorage() {
   localStorage.setItem('prompts', JSON.stringify(prompts));
+  localStorage.setItem('folders', JSON.stringify(folders));
+  localStorage.setItem('syncQueue', JSON.stringify(syncQueue));
+  localStorage.setItem('categories', JSON.stringify(categories));
 }
 
 function applyTheme() {
@@ -1836,19 +2018,21 @@ function showVariableModal(prompt, vars) {
 
 function handleVariableCopy() {
   if (!activeVariablePrompt) return;
-
-  let finalBody = activeVariablePrompt.body;
-  const inputs = variableFields.querySelectorAll('input');
+  const inputs = variableFields.querySelectorAll('input, textarea');
+  let finalPrompt = activeVariablePrompt.body;
 
   inputs.forEach(input => {
-    const varName = input.getAttribute('data-var');
-    const value = input.value.trim(); // replace empty with empty text
-    // Replace all occurrences of {{varName}}
-    const re = new RegExp(`{{${varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}}}`, 'gi');
-    finalBody = finalBody.replace(re, value);
+    const varName = input.dataset.var;
+    const value = input.value || `{{${varName}}}`;
+    // Replace all occurrences of this variable
+    const re = new RegExp(`{{${varName}}}`, 'g');
+    finalPrompt = finalPrompt.replace(re, value);
   });
 
-  navigator.clipboard.writeText(finalBody);
+  // Apply cleanup to the final merged result
+  finalPrompt = cleanPromptText(finalPrompt);
+
+  doCopy(finalPrompt, activeVariablePrompt.id);
   variableModalOverlay.classList.add('hidden');
   showToast('Template filled and copied to clipboard.');
 
@@ -1902,7 +2086,7 @@ function showVariableSelectionModal(prompt) {
   const suggestions = suggestVariables(prompt.body);
 
   // Tokenize the prompt body into words and punctuation
-  const tokens = prompt.body.split(/(\s+|[.,!?;:"'()[\]{}])/g).filter(t => t);
+  const tokens = prompt.body.split(/(\s+|[.,!?;:"'()[\]{}]|\n)/g).filter(t => t);
 
   varSelectPreview.innerHTML = '';
   tokens.forEach((token, index) => {
@@ -1987,8 +2171,8 @@ function confirmVariableSelection() {
     saveToLocalStorage();
 
     // Sync to cloud if applicable
-    if (prompts[idx].cloud_id) {
-      savePromptToSupabase(prompts[idx]);
+    if (user_session) {
+      syncService.enqueue({ type: 'update', local_id: lastPendingPrompt.id, payload: prompts[idx] });
     }
 
     renderPrompts();
@@ -2035,26 +2219,55 @@ if (varSelectOverlay) {
 }
 
 function doCopy(text, id, silent = false) {
-  navigator.clipboard.writeText(text);
-  if (!silent) showToast('Copied to clipboard!');
+  // 0. Smart Prompt Cleanup (Invisible Power)
+  const cleanedText = cleanPromptText(text);
 
-  // Visual feedback
-  const card = document.querySelector(`[data-id="${id}"]`);
+  const textArea = document.createElement("textarea");
+  textArea.value = cleanedText;
+  document.body.appendChild(textArea);
+  textArea.select();
+  document.execCommand("copy");
+  document.body.removeChild(textArea);
+
+  if (!silent) showToast("Copied to clipboard!");
+  if (id) updateUsageCount(id);
+
+  // Visual feedback on button if possible
+  const card = document.querySelector(`.prompt-card[data-id="${id}"]`);
   if (card) {
-    const copyBtn = card.querySelector('.card-actions button:nth-child(2)');
-    if (copyBtn) {
-      const checkIcon = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
-      const originalHTML = copyBtn.innerHTML;
-      copyBtn.innerHTML = checkIcon;
-      copyBtn.classList.add('copied-state');
-      setTimeout(() => {
-        copyBtn.innerHTML = originalHTML;
-        copyBtn.classList.remove('copied-state');
-      }, 1500);
+    const btn = card.querySelector('.icon-btn[title="Copy"]');
+    if (btn) {
+      btn.classList.add('copied-state');
+      setTimeout(() => btn.classList.remove('copied-state'), 1500);
     }
   }
+}
 
-  updateUsageCount(id);
+/**
+ * Smart Prompt Cleanup: The "Invisible Janitor"
+ * Collapses blank lines, trims edges, and normalizes breaks on usage.
+ */
+function cleanPromptText(text) {
+  if (!text) return '';
+
+  return text
+    // 1. Normalize line endings & remove invisible junk
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/\u00A0/g, ' ') // Normalize non-breaking spaces to regular spaces
+    .replace(/[\u200B-\u200D\uFEFF]/g, '') // Strip zero-width junk
+    // 2. Process line by line
+    .split('\n')
+    .map(line => {
+      let l = line.trim();
+      // Smart Bullet Spacing: "-Item" -> "- Item"
+      return l.replace(/^([-*+•])(\S)/, '$1 $2');
+    })
+    .join('\n')
+    // 3. Collapse multiple empty lines (max 1)
+    .replace(/\n{3,}/g, '\n\n')
+    // 4. Final edge trim
+    .trim();
 }
 
 async function updateUsageCount(id) {
@@ -2081,6 +2294,10 @@ function openModal() {
   document.getElementById('modalTitle').textContent = 'Add Prompt';
   document.getElementById('category').value = 'other';
   updateCategoryDropdownUI(modalCategoryDropdown, 'other');
+
+  // Reset manual interaction tracking
+  hasManuallySetCategory = false;
+  hasManuallySetTitle = false;
 
   // Reset Storage Selection (Default to Cloud for Modal)
   const radioCloud = document.querySelector('input[name="storageType"][value="cloud"]');
@@ -2144,60 +2361,7 @@ window.copyPrompt = copyPrompt;
 window.openEditModal = openEditModal;
 
 // Queue Offline
-function queueOffline(item) {
-  offlineQueue.push({
-    ...item,
-    localId: item.id
-  });
-  localStorage.setItem('offlineQueue', JSON.stringify(offlineQueue));
-  showToast('Offline: Queued for sync');
-}
-
-async function syncOfflineQueue() {
-  offlineQueue = JSON.parse(localStorage.getItem('offlineQueue') || '[]');
-  if (!supabaseClient || !offlineQueue.length) return;
-
-  const queue = [...offlineQueue];
-  const remaining = [];
-
-  for (const item of queue) {
-    try {
-      // Try Insert
-      // IF user logged in, attach user_id, else just device_id
-      const payload = {
-        device_id: device_id,
-        user_id: user_session ? user_session.user.id : null,
-        title: item.title,
-        body: item.body,
-        tags: item.tags,
-        favorite: item.favorite,
-        category: item.category || 'other'
-      };
-
-      const { data, error } = await supabaseClient
-        .from("prompt_saves")
-        .insert([payload])
-        .select()
-        .single();
-
-      if (error) {
-        console.error('Sync item failed:', error);
-        remaining.push(item);
-      } else {
-        const idx = prompts.findIndex(p => p.id === item.localId);
-        if (idx > -1) prompts[idx].cloud_id = data.id;
-      }
-    } catch (err) {
-      console.error('Sync exception:', err);
-      remaining.push(item);
-    }
-  }
-
-  offlineQueue = remaining;
-  localStorage.setItem('offlineQueue', JSON.stringify(offlineQueue));
-  saveToLocalStorage();
-  if (queue.length > remaining.length) showToast('Offline prompts synced!');
-}
+// Obsolete offline sync helpers removed. Replaced by SyncService.
 
 function exportData() {
   const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(prompts));
@@ -2223,9 +2387,17 @@ function importDataFile(file) {
       for (const p of imported) {
         if (!currentIds.has(p.id)) {
           if (!p.category) p.category = 'other';
+          // Initialize for new system
+          p.user_id = user_session ? user_session.user.id : null;
+          p.status = user_session ? 'syncing' : 'local-only';
+          p.is_guest_data = !user_session;
+
           prompts.push(p);
           added++;
-          savePromptToSupabase(p);
+
+          if (user_session) {
+            syncService.enqueue({ type: 'create', local_id: p.id, payload: p });
+          }
         }
       }
       saveToLocalStorage();
@@ -2428,6 +2600,82 @@ function capitalize(s) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+// ---------- Onboarding Logic ----------
+class OnboardingManager {
+  constructor() {
+    this.modal = document.getElementById('onboardingModal');
+    this.slider = document.getElementById('onboardingSlides');
+    this.dots = document.querySelectorAll('.dot');
+    this.prevBtn = document.getElementById('prevSlide');
+    this.nextBtn = document.getElementById('nextSlide');
+    this.skipBtn = document.getElementById('skipOnboarding');
+    this.finishBtn = document.getElementById('finishOnboarding');
+    this.currentIndex = 0;
+    this.totalSlides = 5;
+
+    this.init();
+  }
+
+  init() {
+    if (!this.modal) return;
+    this.nextBtn.addEventListener('click', () => this.goToSlide(this.currentIndex + 1));
+    this.prevBtn.addEventListener('click', () => this.goToSlide(this.currentIndex - 1));
+    this.skipBtn.addEventListener('click', () => this.complete());
+    this.finishBtn.addEventListener('click', () => this.complete());
+
+    document.addEventListener('keydown', (e) => {
+      if (!this.modal.classList.contains('hidden')) {
+        if (e.key === 'ArrowRight') this.goToSlide(this.currentIndex + 1);
+        if (e.key === 'ArrowLeft') this.goToSlide(this.currentIndex - 1);
+        if (e.key === 'Escape') this.complete();
+      }
+    });
+
+    // Dot navigation
+    this.dots.forEach((dot, idx) => {
+      dot.addEventListener('click', () => this.goToSlide(idx));
+    });
+  }
+
+  goToSlide(index) {
+    if (index < 0 || index >= this.totalSlides) return;
+    this.currentIndex = index;
+    this.updateUI();
+  }
+
+  updateUI() {
+    // Slide transition
+    this.slider.style.transform = `translateX(-${this.currentIndex * 100}%)`;
+
+    // Active slide state for micro-animations
+    const slides = document.querySelectorAll('.onboarding-slide');
+    slides.forEach((s, idx) => {
+      s.classList.toggle('active', idx === this.currentIndex);
+    });
+
+    // Update dots
+    this.dots.forEach((dot, idx) => {
+      dot.classList.toggle('active', idx === this.currentIndex);
+    });
+
+    // Update buttons
+    this.prevBtn.disabled = this.currentIndex === 0;
+    this.nextBtn.style.visibility = this.currentIndex === this.totalSlides - 1 ? 'hidden' : 'visible';
+  }
+
+  async show() {
+    this.currentIndex = 0;
+    this.updateUI();
+    this.modal.classList.remove('hidden');
+  }
+
+  async complete() {
+    this.modal.classList.add('hidden');
+  }
+}
+
+const onboardingManager = new OnboardingManager();
+
 function setupRealtime() {
   if (supabaseClient) {
     supabaseClient.channel('public:prompt_saves')
@@ -2610,7 +2858,7 @@ async function sharePrompt(id) {
   // 1. Generate Content Snapshot (Immutable)
   const snapshot = {
     title: prompt.title,
-    body: prompt.body,
+    body: cleanPromptText(prompt.body), // Clean before sharing
     tags: prompt.tags,
     category: prompt.category,
     created_at: new Date().toISOString()
@@ -2776,7 +3024,7 @@ function enterViewerMode(sharedParams) {
     window.history.replaceState({}, document.title, window.location.pathname);
 
     if (user_session) {
-      await savePromptToSupabase(newPrompt);
+      syncService.enqueue({ type: 'create', local_id: newPrompt.id, payload: newPrompt });
     }
   };
 

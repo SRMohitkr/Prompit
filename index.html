@@ -18,7 +18,7 @@
     <script src="https://unpkg.com/compromise-dates" defer></script>
     <script src="./cloudConfig.js" defer></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
-    <script src="app.js?v=9" defer></script>
+    <script src="app.js?v=10" defer></script>
 </head>
 
 <body>
@@ -228,7 +228,7 @@
                             </path>
                         </svg>
                     </button>
-                    <div class="dropdown-options" style="right: 0; left: auto; width: 200px;">
+                    <div class="dropdown-options" style="right: 0; left: auto; min-width: 220px;">
                         <div class="dropdown-option" id="userInfoOption"
                             style="display:none; border-bottom:1px solid rgba(0,0,0,0.1);">
                             <span class="icon">👤</span>
@@ -279,6 +279,17 @@
         <main id="promptGrid" class="prompt-grid">
             <!-- Prompts will be injected here -->
         </main>
+
+        <!-- Show More Button -->
+        <div id="showMoreContainer" class="show-more-container hidden">
+            <button id="loadMoreBtn" class="load-more-btn">
+                <span class="btn-text">Show More</span>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+            </button>
+        </div>
     </div>
 
     <!-- Floating Action Button -->
@@ -339,25 +350,6 @@
                     <!-- Hidden input to store CSV for form submission -->
                     <input type="hidden" id="tags" name="tags">
                 </div>
-                <fieldset class="form-group border-0 p-0 m-0">
-                    <legend class="label-style">Storage Location</legend>
-                    <div class="storage-selection">
-                        <label class="storage-option">
-                            <input type="radio" name="storageType" value="local">
-                            <span class="storage-box">
-                                <span class="icon">💻</span>
-                                <span class="text">Local Only</span>
-                            </span>
-                        </label>
-                        <label class="storage-option">
-                            <input type="radio" name="storageType" value="cloud" checked>
-                            <span class="storage-box">
-                                <span class="icon">☁️</span>
-                                <span class="text">Cloud Sync</span>
-                            </span>
-                        </label>
-                    </div>
-                </fieldset>
                 <div class="form-actions">
                     <button type="button" id="autoFillBtn" class="secondary-btn"
                         title="Auto-fill metadata from body text">✨ Auto-Fill</button>
@@ -535,6 +527,86 @@
             </div>
         </div>
     </section>
+
+    <!-- Onboarding Slider Modal -->
+    <div id="onboardingModal" class="modal-overlay hidden">
+        <div class="onboarding-bg-blobs">
+            <div class="blob blob-1"></div>
+            <div class="blob blob-2"></div>
+        </div>
+        <div class="onboarding-modal glass-panel">
+            <button class="skip-btn" id="skipOnboarding">Skip</button>
+            <div class="onboarding-slider">
+                <div class="onboarding-slides" id="onboardingSlides">
+                    <!-- Slide 1 -->
+                    <div class="onboarding-slide active" data-index="0">
+                        <div class="slide-badge">Core Concept</div>
+                        <div class="slide-visual">
+                            <img src="assets/onboarding/onboarding_memory.png" alt="Memory" class="onboarding-img">
+                        </div>
+                        <h2>What Prompit Is</h2>
+                        <p>Prompit remembers your best prompts so you don’t have to. Built for speed and focus.</p>
+                    </div>
+                    <!-- Slide 2 -->
+                    <div class="onboarding-slide" data-index="1">
+                        <div class="slide-badge">Workflow</div>
+                        <div class="slide-visual">
+                            <img src="assets/onboarding/onboarding_save.png" alt="Save" class="onboarding-img">
+                        </div>
+                        <h2>Save Without Thinking</h2>
+                        <p>Save prompts instantly. No friction. No loss. Your thoughts, safely captured.</p>
+                    </div>
+                    <!-- Slide 3 -->
+                    <div class="onboarding-slide" data-index="2">
+                        <div class="slide-badge">Search</div>
+                        <div class="slide-visual">
+                            <img src="assets/onboarding/onboarding_search.png" alt="Search" class="onboarding-img">
+                        </div>
+                        <h2>Find Anything Instantly</h2>
+                        <p>If you remember one line, Prompit finds it. Search that stays ahead of you.</p>
+                    </div>
+                    <!-- Slide 4 -->
+                    <div class="onboarding-slide" data-index="3">
+                        <div class="slide-badge">Utility</div>
+                        <div class="slide-visual">
+                            <img src="assets/onboarding/onboarding_reuse.png" alt="Reuse" class="onboarding-img">
+                        </div>
+                        <h2>Reuse, Don’t Rewrite</h2>
+                        <p>Your best prompts should work again and again. Copy and template with one click.</p>
+                    </div>
+                    <!-- Slide 5 -->
+                    <div class="onboarding-slide" data-index="4">
+                        <div class="slide-badge">Focus</div>
+                        <div class="slide-visual">
+                            <img src="assets/onboarding/onboarding_focus.png" alt="Focus" class="onboarding-img">
+                        </div>
+                        <h2>Stays Out of Your Way</h2>
+                        <p>Calm. Private. Built for daily work. Welcome to your new workspace.</p>
+                        <button id="finishOnboarding" class="primary-btn finish-btn">Start using Prompit</button>
+                    </div>
+                </div>
+            </div>
+            <div class="onboarding-controls">
+                <button class="nav-btn prev-btn" id="prevSlide" disabled>
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="15 18 9 12 15 6"></polyline>
+                    </svg>
+                </button>
+                <div class="progress-dots" id="progressDots">
+                    <span class="dot active" data-index="0"></span>
+                    <span class="dot" data-index="1"></span>
+                    <span class="dot" data-index="2"></span>
+                    <span class="dot" data-index="3"></span>
+                    <span class="dot" data-index="4"></span>
+                </div>
+                <button class="nav-btn next-btn" id="nextSlide">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="9 18 15 12 9 6"></polyline>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </div>
 
     <footer class="app-footer glass-panel">
         <div class="footer-text">Made with <span>❤️</span> by SR.Mohitkr</div>
