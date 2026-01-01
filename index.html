@@ -258,6 +258,10 @@
                             <span class="icon">📤</span>
                             <span class="text">Import JSON</span>
                         </div>
+                        <div class="dropdown-option" id="bookmarkletOption">
+                            <span class="icon">🔖</span>
+                            <span class="text">Get Bookmarklet</span>
+                        </div>
                         <div class="dropdown-option" id="themeOption">
                             <span class="icon">🌓</span>
                             <span class="text">Switch Theme</span>
@@ -266,10 +270,6 @@
                         <div class="dropdown-option" id="loginOption" style="color:var(--primary-color);">
                             <span class="icon">🔐</span>
                             <span class="text">Login / Signup</span>
-                        </div>
-                        <div class="dropdown-option" id="logoutOption" style="display:none; color:var(--danger-color);">
-                            <span class="icon">🚪</span>
-                            <span class="text">Logout</span>
                         </div>
                     </div>
                 </div>
@@ -289,7 +289,7 @@
         <div class="paste-area glass-panel">
             <textarea id="quickPaste" name="quick_paste" aria-label="Quick paste prompt"
                 placeholder="Paste any prompt here to save it instantly…"></textarea>
-            <button id="quickAddBtn">Quick Add</button>
+            <button id="quickAddBtn">Save</button>
         </div>
 
         <!-- Main Grid -->
@@ -322,7 +322,7 @@
     <div id="modalOverlay" class="modal-overlay hidden">
         <div class="modal glass-panel">
             <div class="modal-header">
-                <h2 id="modalTitle">Add Prompt</h2>
+                <h2 id="modalTitle">Capture Prompt</h2>
                 <button id="closeModal" class="close-btn">&times;</button>
             </div>
             <form id="promptForm">
@@ -370,7 +370,7 @@
                 <div class="form-actions">
                     <button type="button" id="autoFillBtn" class="secondary-btn"
                         title="Auto-fill metadata from body text">✨ Auto-Fill</button>
-                    <button type="submit" class="primary-btn">Save Prompt</button>
+                    <button type="submit" class="primary-btn">Done</button>
                 </div>
             </form>
         </div>
@@ -580,6 +580,62 @@
     <!-- Scripts moved to head with defer -->
 
     <!-- Bookmarklet Modal -->
+    <div id="bookmarkletModalOverlay" class="modal-overlay hidden">
+        <div class="modal glass-panel modal-bookmarklet">
+            <div class="modal-header">
+                <h2>Genius Bookmarklet</h2>
+                <button id="closeBookmarkletModal" class="close-btn">&times;</button>
+            </div>
+
+            <div class="slider-container">
+                <div class="slider-viewport" id="onboardingSlider">
+                    <!-- Page 1: Installation -->
+                    <div class="slider-page active">
+                        <div class="illustration">🎯</div>
+                        <h3>Step 1: Installation</h3>
+                        <p><b>Drag</b> the button below to your <b>bookmarks bar</b>. It's the <span
+                                class="highlight-word">secret key</span> to your memory.</p>
+                        <div style="margin-top: 25px;">
+                            <a id="bookmarkletLink" href="#" onclick="return false;"
+                                style="display: inline-block; padding: 14px 28px; background: var(--primary-color); color: white; border-radius: 12px; text-decoration: none; font-weight: 700; cursor: move; box-shadow: 0 4px 15px rgba(74, 144, 226, 0.3);">🚀
+                                Save to Prompit</a>
+                        </div>
+                    </div>
+                    <!-- Page 2: Usage -->
+                    <div class="slider-page">
+                        <div class="illustration">🧠</div>
+                        <h3>Step 2: Capture Ideas</h3>
+                        <p><b>Select any text</b> on any website and click your new bookmarklet. <span
+                                class="highlight-word">No tab switching</span>, no friction.
+                        </p>
+                        <div style="margin-top: 20px; font-size: 0.9rem; opacity: 0.7;">Works on OpenAI, Claude, GitHub,
+                            and more.</div>
+                    </div>
+                    <!-- Page 3: Done -->
+                    <div class="slider-page">
+                        <div class="illustration">⚡</div>
+                        <h3>Step 3: Success</h3>
+                        <p>Press <b>⌘ + Enter</b> to save <span class="highlight-word">instantly</span>. Prompit
+                            auto-detects titles and categories for you.
+                        </p>
+                        <div
+                            style="margin-top: 20px; font-size: 0.9rem; font-weight: 600; color: var(--primary-color);">
+                            Capture in < 1 second.</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="slider-nav">
+                    <button id="prevOnboarding" class="slider-btn" disabled>Back</button>
+                    <div class="slider-dots" id="onboardingDots">
+                        <div class="dot active" data-index="0"></div>
+                        <div class="dot" data-index="1"></div>
+                        <div class="dot" data-index="2"></div>
+                    </div>
+                    <button id="nextOnboarding" class="slider-btn primary">Next</button>
+                </div>
+            </div>
+        </div>
 
 
 

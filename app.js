@@ -1,162 +1,3 @@
-/*
-=====================================================
-⚠️ IMPORTANT: RUN THIS SQL IN SUPABASE SQL EDITOR FIRST!
-=====================================================
-
--- 1. Create profiles table
-create table if not exists public.profiles (
-  id uuid references auth.users on delete cascade primary key,
-  email text,
-  onboarding_completed boolean default false,
-  last_login timestamp with time zone,
-  created_at timestamp with time zone default now()
-);
-alter table public.profiles enable row level security;
-create policy "Users can view own profile" on profiles for select using ((select auth.uid()) = id);
-create policy "Users can update own profile" on profiles for update using ((select auth.uid()) = id);
-create policy "Users can insert own profile" on profiles for insert with check ((select auth.uid()) = id);
-
--- 2. Create or Update prompt_saves table
-create table if not exists public.prompt_saves (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid references auth.users(id),
-  device_id text,
-  client_mutation_id text unique,
-  title text,
-  body text,
-  tags text,
-  category text,
-  favorite boolean default false,
-  total_usage integer default 0,
-  last_used_at timestamp with time zone,
-  created_at timestamp with time zone default now(),
-  updated_at timestamp with time zone default now()
-);
-
--- 2. Refine prompt_saves for Multi-Identity
-alter table public.prompt_saves add column if not exists device_id text;
-alter table public.prompt_saves add column if not exists user_id uuid references auth.users(id);
-alter table public.prompt_saves add column if not exists client_mutation_id text;
-alter table public.prompt_saves add constraint prompt_saves_client_mutation_id_key unique (client_mutation_id);
-
--- 3. Create folders table
-create table if not exists public.folders (
-  id uuid primary key default gen_random_uuid(),
-  name text not null,
-  user_id uuid references auth.users(id) on delete cascade,
-  device_id text,
-  created_at timestamp with time zone default now()
-);
-
--- 4. Create device_metadata table
-create table if not exists public.device_metadata (
-  device_id text primary key,
-  categories text,
-  updated_at timestamp with time zone default now()
-);
-
--- 5. RLS Policies (Tier-1 Security)
-alter table public.prompt_saves enable row level security;
-alter table public.folders enable row level security;
-    ((select auth.role()) = 'anon')
-  );
-
-create policy "Users and Devices can create own folders" on folders
-  for insert with check (
-    ((select auth.uid()) = user_id) OR 
-    (device_id = (select current_setting('request.headers', true)::json->>'x-device-id')) OR
-    ((select auth.role()) = 'anon')
-  );
-
-create policy "Users and Devices can update own folders" on folders
-  for update using (
-    ((select auth.uid()) = user_id) OR 
-    (device_id = (select current_setting('request.headers', true)::json->>'x-device-id')) OR
-    ((select auth.role()) = 'anon')
-  );
-
-create policy "Users and Devices can delete own folders" on folders
-  for delete using (
-    ((select auth.uid()) = user_id) OR 
-    (device_id = (select current_setting('request.headers', true)::json->>'x-device-id')) OR
-    ((select auth.role()) = 'anon')
-  );
-
--- Add folder_id to prompt_saves (Handled in main migration block)
-
-
--- 7. Shared Prompts (Immutable Link Snapshots)
-create table if not exists public.shared_prompts (
-  id uuid primary key default gen_random_uuid(),
-  short_code text unique not null,
-  original_author_id uuid references auth.users(id),
-  content_snapshot jsonb not null,
-  views integer default 0,
-  created_at timestamp with time zone default now()
-);
-
--- RLS for Shared Prompts
-alter table public.shared_prompts enable row level security;
-
--- Public Read Access (For recipients)
-create policy "Allow public read access to shared prompts" on shared_prompts
-  for select using (true);
-
--- Authenticated/Guest Creation Access (For senders)
-create policy "Allow creation of shared prompts" on shared_prompts
-  for insert with check (true);
-
--- Only Author Can Delete (Revoke)
-create policy "Users can delete their own shared links" on shared_prompts
-  for delete using (((select auth.uid()) = original_author_id));
-
-
--- 8. Performance Indexes (Linter Fixes)
--- Foreign Keys
-create index if not exists idx_folders_user_id on public.folders(user_id);
-create index if not exists idx_prompt_saves_user_id on public.prompt_saves(user_id);
-create index if not exists idx_prompt_saves_folder_id on public.prompt_saves(folder_id);
-create index if not exists idx_shared_prompts_original_author_id on public.shared_prompts(original_author_id);
-
--- Performance columns (used in RLS)
-create index if not exists idx_folders_device_id on public.folders(device_id);
-create index if not exists idx_prompt_saves_device_id on public.prompt_saves(device_id);
-create index if not exists idx_device_metadata_device_id on public.device_metadata(device_id);
-
--- 9. Scale-Ready Hybrid Search (Additive Scaling Plan)
--- Add tsvector for faster search at scale
-alter table public.prompt_saves add column if not exists fts tsvector 
-generated always as (to_tsvector('english', coalesce(title, '') || ' ' || coalesce(body, '') || ' ' || coalesce(tags, ''))) stored;
-
-create index if not exists idx_prompt_saves_fts on public.prompt_saves using gin(fts);
-
--- 10. Automatic Versioning History (Immutable Snapshots)
--- 10. Automatic Versioning History (Immutable Snapshots)
-create table if not exists public.prompt_versions (
-  id uuid primary key default gen_random_uuid(),
-  prompt_id uuid references public.prompt_saves(id) on delete cascade,
-  user_id uuid references auth.users(id), -- Added for robust RLS
-  content text not null,
-  created_at timestamp with time zone default now()
-);
-
--- Index for fast history lookup
-create index if not exists idx_prompt_versions_prompt_id on public.prompt_versions(prompt_id);
-
--- RLS for Prompt Versions (Crucial to fix 403 errors)
-alter table public.prompt_versions enable row level security;
-
--- Policy 1: Allow owners to insert their own versions (Direct Check)
-create policy "Owners can insert versions" on public.prompt_versions
-  for insert with check (auth.uid() = user_id);
-
--- Policy 2: Allow owners to view their own versions (Direct Check)
-create policy "Owners can view versions" on public.prompt_versions
-  for select using (auth.uid() = user_id);
-
-=====================================================
-*/
-
 // ---------- Init & Globals ----------
 if (typeof nlp !== 'undefined' && typeof nlpDates !== 'undefined') {
   nlp.extend(nlpDates);
@@ -202,11 +43,6 @@ let activeFolderId = null; // null = 'All Prompts'
 let hasManuallySetCategory = false;
 let hasManuallySetTitle = false;
 
-console.log("App Start: Parsed Data", {
-  prompts_len: prompts.length,
-  syncQueue_len: syncQueue.length,
-  folders_len: folders.length
-});
 
 /**
  * SyncService - Manages background sync operations with idempotency.
@@ -263,7 +99,6 @@ class SyncService {
         // FAIL SILENTLY: Keep in queue, increase backoff
         this.retryCount++;
         const backoff = Math.min(Math.pow(2, this.retryCount) * 1000 + Math.random() * 1000, this.maxBackoff);
-        console.log(`Sync delayed: retrying in ${Math.round(backoff / 1000)}s`);
 
         setTimeout(() => {
           this.isProcessing = false;
@@ -390,18 +225,23 @@ const backToEmailLink = document.getElementById('backToEmail');
 const skipAuthBtn = document.getElementById('skipAuthBtn');
 const userInfoOption = document.getElementById('userInfoOption');
 const userEmailDisplay = document.getElementById('userEmailDisplay');
-const logoutOption = document.getElementById('logoutOption');
 const loginOption = document.getElementById('loginOption');
+
+const bookmarkletOption = document.getElementById('bookmarkletOption');
+const bookmarkletModalOverlay = document.getElementById('bookmarkletModalOverlay');
+const bookmarkletLink = document.getElementById('bookmarkletLink');
+const closeBookmarkletModal = document.getElementById('closeBookmarkletModal');
 
 let currentFilter = 'all';
 
 // ---------- App Start ----------
 async function initApp() {
   try {
-    console.log("initApp: Starting initialization...");
     applyTheme();
     setupAuthListeners();
     setupEventListeners();
+    setupBookmarklet();
+    initBookmarkletOnboarding();
     renderCategories();
     renderFolderStream();
 
@@ -426,7 +266,6 @@ async function initApp() {
     // Check for incoming shared link FIRST (Routing)
     const isSharedView = await checkSharedLink();
     if (isSharedView) {
-      console.log("Shared View Active - Halting Main App Init");
       return;
     }
 
@@ -437,18 +276,15 @@ async function initApp() {
       user_session = session;
 
       if (session) {
-        console.log("initApp: Session found for", session.user.email);
         updateAuthUI();
         renderUserProfile(session.user);
         // Sync in background to avoid blocking LCP
         syncData();
       } else {
-        console.log("initApp: No session.");
       }
 
       // Listen for auth changes (Magic Link redirects, logouts, etc.)
       supabaseClient.auth.onAuthStateChange(async (event, session) => {
-        console.log("Auth State Changed:", event, session?.user?.email);
         user_session = session;
         if (event === 'SIGNED_IN' && session) {
           updateAuthUI();
@@ -526,10 +362,8 @@ function setupAuthListeners() {
     // Note: To receive a 6-digit code, ensure 'Enable Email Provider' is ON in Supabase
     // and your email template includes {{ .Token }}
     // Switch to Code Flow (More reliable than Links)
-    console.log("Attempting login for:", email);
 
     // Switch back to Magic Link (User Request)
-    console.log("Sending Magic Link to:", email);
     const { data, error } = await supabaseClient.auth.signInWithOtp({
       email,
       options: {
@@ -538,14 +372,12 @@ function setupAuthListeners() {
       }
     });
 
-    console.log("Supabase Auth Response:", { data, error });
     setLoading(sendOtpBtn, false);
 
     if (error) {
       console.error("Auth Error:", error);
       alert('Error sending magic link: ' + error.message);
     } else {
-      console.log("Magic Link Sent.");
       authEmailForm.classList.add('hidden');
       authOtpForm.classList.add('hidden'); // Ensure OTP form is hidden
       document.getElementById('sentEmailAddress').textContent = email;
@@ -654,19 +486,15 @@ function setupAuthListeners() {
     });
   }
 
-  // Logout
-  logoutOption.addEventListener('click', handleLogout);
 }
 
 function updateAuthUI() {
   if (user_session) {
     userInfoOption.style.display = 'flex';
-    logoutOption.style.display = 'flex';
     if (loginOption) loginOption.style.display = 'none';
     userEmailDisplay.textContent = user_session.user.email;
   } else {
     userInfoOption.style.display = 'none';
-    logoutOption.style.display = 'none';
     if (loginOption) loginOption.style.display = 'flex';
   }
 }
@@ -697,7 +525,6 @@ function setLoading(btnElement, isLoading) {
 async function migratePromptsToUser(userId) {
   if (!supabaseClient || !userId) return;
 
-  console.log("Identity System: Initiating Guest -> Auth Migration...");
 
   // 1. Flush any pending guest data currently in the local sync queue
   // This ensures we're migrating the most up-to-date local state
@@ -715,7 +542,6 @@ async function migratePromptsToUser(userId) {
     if (error) throw error;
 
     if (orphanedPrompts && orphanedPrompts.length > 0) {
-      console.log(`Identity System: Found ${orphanedPrompts.length} orphaned guest prompts. Merging...`);
 
       for (const p of orphanedPrompts) {
         // Enqueue as an update to assign the user_id. 
@@ -776,6 +602,23 @@ function setupEventListeners() {
   exportOption.addEventListener('click', exportData);
   importOption.addEventListener('click', () => fileInput.click());
   fileInput.addEventListener('change', (e) => importDataFile(e.target.files[0]));
+
+  // Bookmarklet
+  if (bookmarkletOption) {
+    bookmarkletOption.addEventListener('click', () => {
+      bookmarkletModalOverlay.classList.remove('hidden');
+    });
+  }
+  if (closeBookmarkletModal) {
+    closeBookmarkletModal.addEventListener('click', () => {
+      bookmarkletModalOverlay.classList.add('hidden');
+    });
+  }
+  if (bookmarkletModalOverlay) {
+    bookmarkletModalOverlay.addEventListener('click', (e) => {
+      if (e.target === bookmarkletModalOverlay) bookmarkletModalOverlay.classList.add('hidden');
+    });
+  }
 
   // Auto-fill
   document.getElementById('autoFillBtn').addEventListener('click', () => {
@@ -965,7 +808,7 @@ function setupCustomDropdown(dropdownElement, onSelect) {
     const val = option.dataset.value;
     const text = option.textContent;
 
-    if (option.id === 'userInfoOption' || option.id === 'logoutOption' || option.id === 'exportOption' || option.id === 'importOption' || option.id === 'themeOption') {
+    if (option.id === 'userInfoOption' || option.id === 'exportOption' || option.id === 'importOption' || option.id === 'themeOption') {
       // These are actions, not selects
       dropdownElement.classList.remove('open');
       return;
@@ -982,6 +825,83 @@ function setupCustomDropdown(dropdownElement, onSelect) {
   });
 
   document.addEventListener('click', () => dropdownElement.classList.remove('open'));
+}
+
+function setupBookmarklet() {
+  const origin = window.location.origin;
+  const script = `(function(){const s=window.getSelection().toString();const w=Math.min(screen.width-20,480);const h=Math.min(screen.height-20,420);const l=(screen.width/2)-(w/2);const t=(screen.height/2)-(h/2);window.open("${origin}/bridge.html?text="+encodeURIComponent(s)+"&url="+encodeURIComponent(window.location.href),"prompitCapture","width="+w+",height="+h+",top="+t+",left="+l+",resizable=yes,scrollbars=yes,status=no,location=no,toolbar=no,menubar=no");})();`;
+
+  if (bookmarkletLink) {
+    bookmarkletLink.href = "javascript:" + script;
+  }
+}
+
+function initBookmarkletOnboarding() {
+  const slider = document.getElementById('onboardingSlider');
+  const dots = document.querySelectorAll('#onboardingDots .dot');
+  const btnPrev = document.getElementById('prevOnboarding');
+  const btnNext = document.getElementById('nextOnboarding');
+  const modalOverlay = document.getElementById('bookmarkletModalOverlay');
+
+  let currentIndex = 0;
+  const totalPages = dots.length;
+
+  function updateSlider() {
+    // 1. Viewport Translation
+    slider.style.transform = `translateX(-${currentIndex * 100}%)`;
+
+    // 2. Dots Update
+    dots.forEach((dot, i) => {
+      dot.classList.toggle('active', i === currentIndex);
+    });
+
+    // 3. Pages Class Update (for scale/opacity)
+    const pages = slider.querySelectorAll('.slider-page');
+    pages.forEach((page, i) => {
+      page.classList.toggle('active', i === currentIndex);
+    });
+
+    // 4. Buttons State
+    btnPrev.disabled = currentIndex === 0;
+    if (currentIndex === totalPages - 1) {
+      btnNext.textContent = 'Got it';
+      btnNext.classList.add('primary');
+    } else {
+      btnNext.textContent = 'Next';
+      btnNext.classList.add('primary');
+    }
+  }
+
+  function goToPage(index) {
+    if (index < 0 || index >= totalPages) return;
+    currentIndex = index;
+    updateSlider();
+  }
+
+  btnNext.addEventListener('click', () => {
+    if (currentIndex === totalPages - 1) {
+      modalOverlay.classList.add('hidden');
+      // Optional: Reset for next open
+      setTimeout(() => goToPage(0), 400);
+    } else {
+      goToPage(currentIndex + 1);
+    }
+  });
+
+  btnPrev.addEventListener('click', () => {
+    goToPage(currentIndex - 1);
+  });
+
+  dots.forEach(dot => {
+    dot.addEventListener('click', () => {
+      goToPage(parseInt(dot.dataset.index));
+    });
+  });
+
+  // Reset when opening
+  document.getElementById('bookmarkletOption')?.addEventListener('click', () => {
+    goToPage(0);
+  });
 }
 
 function updateCategoryDropdownUI(dropdownElement, value) {
@@ -1138,7 +1058,7 @@ async function handleFormSubmit(e) {
   saveToLocalStorage();
   renderPrompts(searchInput?.value, currentFilter);
   closeModal();
-  showToast('Prompt saved!');
+  showToast('Captured');
 
   if (user_session) {
     const type = id ? 'update' : 'create';
@@ -1180,7 +1100,7 @@ function handleQuickAdd() {
   saveToLocalStorage();
   renderPrompts(searchInput?.value, currentFilter);
   quickPaste.value = '';
-  showToast('Saved!');
+  showToast('Done');
 
   if (user_session) {
     syncService.enqueue({ type: 'create', local_id: newPrompt.id, payload: newPrompt });
@@ -1198,7 +1118,7 @@ async function deletePrompt(id) {
   prompts = prompts.filter(p => String(p.id) !== String(id));
   saveToLocalStorage();
   renderPrompts(searchInput?.value, currentFilter);
-  showToast("Deleted");
+  showToast('Removed');
 
   // 2. Handle Cloud Sync
   if (user_session) {
@@ -1295,7 +1215,6 @@ async function loadPromptsFromSupabaseAndMerge() {
 
         if (localTime > cloudTime) {
           // Local is newer. Keep Local and queue sync.
-          console.log(`Conflict: Local (${localTime}) > Cloud (${cloudTime}). Keeping Local & Queuing.`);
           localP.status = 'syncing';
           localP.is_guest_data = false; // It's cloud-linked now
           mergedPrompts.push(localP);
@@ -1496,7 +1415,6 @@ async function syncLocalFoldersToCloud() {
 // ---------- Folder UI Renderer ----------
 
 function renderFolderStream() {
-  console.log("renderFolderStream called", folders);
   const container = document.getElementById('folderStream');
   if (!container) return;
 
@@ -2140,10 +2058,6 @@ function hideVariableSelectionModal() {
 }
 
 function confirmVariableSelection() {
-  console.log('Confirming selection...', {
-    promptId: lastPendingPrompt ? lastPendingPrompt.id : 'null',
-    selectedWords: Array.from(selectedVariableWords)
-  });
 
   if (!lastPendingPrompt || selectedVariableWords.size === 0) {
     showToast('Select at least one word to use as a variable.');
@@ -2161,7 +2075,6 @@ function confirmVariableSelection() {
     newBody = newBody.replace(re, `{{${varName}}}`);
   });
 
-  console.log('Transformed Body:', newBody);
 
   // Update the prompt
   const idx = prompts.findIndex(p => p.id === lastPendingPrompt.id);
@@ -2194,7 +2107,6 @@ if (closeVarSelectModalBtn) {
 }
 
 if (confirmVarSelectBtn) {
-  console.log("Attaching confirmVarSelectBtn listener");
   confirmVarSelectBtn.onclick = confirmVariableSelection;
 } else {
   console.error("confirmVarSelectBtn not found in DOM");
@@ -2892,7 +2804,6 @@ async function checkSharedLink() {
   const shareCode = params.get('share');
 
   if (shareCode) {
-    console.log("Shared Link Detected:", shareCode);
     const success = await loadSharedPrompt(shareCode);
     return success;
   }
@@ -2983,11 +2894,9 @@ function enterViewerMode(sharedParams) {
 window.renderFolderStream = renderFolderStream;
 window.createFolder = createFolder;
 
-console.log("EOF reached - App.js Loaded. Triggering Boot...");
 
 // Boot Sequence: Ensure DOM is ready, then trigger initApp
 window.addEventListener('load', () => {
-  console.log("Window Load Event - Starting App Boot...");
   initApp();
   NetworkManager.init();
 
@@ -2997,14 +2906,9 @@ window.addEventListener('load', () => {
 
 // Resume sync when network returns
 window.addEventListener('online', () => {
-  console.log("Network back online - resuming sync...");
   syncService.process();
 });
 
 // Re-expose for debug if needed
-window.initApp = initApp;
-window.prompts = prompts;
-window.folders = folders;
-window.supabaseClient = supabaseClient;
 
 
