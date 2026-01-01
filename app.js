@@ -33,107 +33,31 @@ create table if not exists public.prompt_saves (
   updated_at timestamp with time zone default now()
 );
 
--- Ensure columns are TEXT and exist (Idempotent Migration)
-do $$
-begin
-  -- Rename prompt_text to body if it exists and body prevents clean setup
-  if exists (select 1 from information_schema.columns where table_name = 'prompt_saves' and column_name = 'prompt_text') then
-     alter table public.prompt_saves rename column prompt_text to body;
-  end if;
-  
-  -- Add usage tracking columns if they don't exist
-  if not exists (select 1 from information_schema.columns where table_name = 'prompt_saves' and column_name = 'total_usage') then
-     alter table public.prompt_saves add column total_usage integer default 0;
-  end if;
-  
-  if not exists (select 1 from information_schema.columns where table_name = 'prompt_saves' and column_name = 'last_used_at') then
-     alter table public.prompt_saves add column last_used_at timestamp with time zone;
-  end if;
+-- 2. Refine prompt_saves for Multi-Identity
+alter table public.prompt_saves add column if not exists device_id text;
+alter table public.prompt_saves add column if not exists user_id uuid references auth.users(id);
+alter table public.prompt_saves add column if not exists client_mutation_id text;
+alter table public.prompt_saves add constraint prompt_saves_client_mutation_id_key unique (client_mutation_id);
 
-  if not exists (select 1 from information_schema.columns where table_name = 'prompt_saves' and column_name = 'updated_at') then
-     alter table public.prompt_saves add column updated_at timestamp with time zone default now();
-  end if;
+-- 3. Create folders table
+create table if not exists public.folders (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  user_id uuid references auth.users(id) on delete cascade,
+  device_id text,
+  created_at timestamp with time zone default now()
+);
 
-  if not exists (select 1 from information_schema.columns where table_name = 'prompt_saves' and column_name = 'client_mutation_id') then
-     alter table public.prompt_saves add column client_mutation_id text;
-     alter table public.prompt_saves add constraint prompt_saves_client_mutation_id_key unique (client_mutation_id);
-  end if;
-
-  if not exists (select 1 from information_schema.columns where table_name = 'prompt_saves' and column_name = 'folder_id') then
-     alter table public.prompt_saves add column folder_id uuid references public.folders(id) on delete set null;
-  end if;
-end $$;
-
--- 3. Create device_metadata table
+-- 4. Create device_metadata table
 create table if not exists public.device_metadata (
   device_id text primary key,
   categories text,
   updated_at timestamp with time zone default now()
 );
 
--- 4. Create tags table
-create table if not exists public.tags (
-  id uuid primary key default gen_random_uuid(),
-  name text unique not null,
-  created_at timestamp with time zone default now()
-);
-
--- 5. Enable RLS
+-- 5. RLS Policies (Tier-1 Security)
 alter table public.prompt_saves enable row level security;
-alter table public.device_metadata enable row level security;
-alter table public.tags enable row level security;
-
--- 6. RLS Policies (Safe drop/recreate sequence)
-drop policy if exists "Enable all access for devices" on prompt_saves;
-drop policy if exists "Users and Devices can manage their own prompts" on prompt_saves;
-drop policy if exists "Devices can manage metadata" on device_metadata;
-drop policy if exists "Allow public read access to tags" on tags;
-
--- Now safe to alter columns
-alter table public.prompt_saves 
-  alter column device_id type text,
-  alter column body type text,
-  alter column tags type text,
-  alter column category type text;
-
-alter table public.device_metadata alter column device_id type text;
-
-create policy "Users and Devices can manage their own prompts" on prompt_saves
-  for all using (
-    ((select auth.uid()) = user_id) OR 
-    (device_id = (select current_setting('request.headers', true)::json->>'x-device-id')) OR
-    ((select auth.role()) = 'anon')
-  );
-
-create policy "Devices can manage metadata" on device_metadata
-  for all using (
-    (device_id = (select current_setting('request.headers', true)::json->>'x-device-id')) OR
-    ((select auth.role()) = 'anon')
-  );
-
-create policy "Authenticated users can insert tags" on tags
-  for insert with check ((select auth.role()) = 'authenticated');
-
-create policy "Allow public read access to tags" on tags
-  for select using (true);
-
-
--- 6. Folder System Support
-create table if not exists public.folders (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid references auth.users(id), -- Nullable for Guest Mode
-  device_id text,                         -- Added for Guest Mode
-  name text not null,
-  created_at timestamp with time zone default now()
-);
-
--- RLS for Folders
 alter table public.folders enable row level security;
-
-create policy "Users and Devices can view own folders" on folders
-  for select using (
-    ((select auth.uid()) = user_id) OR 
-    (device_id = (select current_setting('request.headers', true)::json->>'x-device-id')) OR
     ((select auth.role()) = 'anon')
   );
 
@@ -199,6 +123,37 @@ create index if not exists idx_folders_device_id on public.folders(device_id);
 create index if not exists idx_prompt_saves_device_id on public.prompt_saves(device_id);
 create index if not exists idx_device_metadata_device_id on public.device_metadata(device_id);
 
+-- 9. Scale-Ready Hybrid Search (Additive Scaling Plan)
+-- Add tsvector for faster search at scale
+alter table public.prompt_saves add column if not exists fts tsvector 
+generated always as (to_tsvector('english', coalesce(title, '') || ' ' || coalesce(body, '') || ' ' || coalesce(tags, ''))) stored;
+
+create index if not exists idx_prompt_saves_fts on public.prompt_saves using gin(fts);
+
+-- 10. Automatic Versioning History (Immutable Snapshots)
+-- 10. Automatic Versioning History (Immutable Snapshots)
+create table if not exists public.prompt_versions (
+  id uuid primary key default gen_random_uuid(),
+  prompt_id uuid references public.prompt_saves(id) on delete cascade,
+  user_id uuid references auth.users(id), -- Added for robust RLS
+  content text not null,
+  created_at timestamp with time zone default now()
+);
+
+-- Index for fast history lookup
+create index if not exists idx_prompt_versions_prompt_id on public.prompt_versions(prompt_id);
+
+-- RLS for Prompt Versions (Crucial to fix 403 errors)
+alter table public.prompt_versions enable row level security;
+
+-- Policy 1: Allow owners to insert their own versions (Direct Check)
+create policy "Owners can insert versions" on public.prompt_versions
+  for insert with check (auth.uid() = user_id);
+
+-- Policy 2: Allow owners to view their own versions (Direct Check)
+create policy "Owners can view versions" on public.prompt_versions
+  for select using (auth.uid() = user_id);
+
 =====================================================
 */
 
@@ -231,6 +186,8 @@ try { categories = JSON.parse(localStorage.getItem('categories') || JSON.stringi
 let prompts = [];
 try { prompts = JSON.parse(localStorage.getItem('prompts') || '[]'); } catch (e) { console.error('Corrupt Prompts', e); localStorage.removeItem('prompts'); }
 
+
+
 // Persisted Sync Queue
 let syncQueue = [];
 try { syncQueue = JSON.parse(localStorage.getItem('syncQueue') || '[]'); } catch (e) { console.error('Corrupt Queue', e); localStorage.removeItem('syncQueue'); }
@@ -238,6 +195,9 @@ try { syncQueue = JSON.parse(localStorage.getItem('syncQueue') || '[]'); } catch
 let folders = [];
 try { folders = JSON.parse(localStorage.getItem('folders') || '[]'); } catch (e) { console.error('Resetting Folders', e); localStorage.removeItem('folders'); }
 let activeFolderId = null; // null = 'All Prompts'
+
+// History Feature Toggle
+
 
 let hasManuallySetCategory = false;
 let hasManuallySetTitle = false;
@@ -254,47 +214,75 @@ console.log("App Start: Parsed Data", {
 class SyncService {
   constructor() {
     this.isProcessing = false;
-    this.retryBackoff = 5000; // Start with 5s
+    this.retryCount = 0;
+    this.maxBackoff = 300000; // 5 minutes
   }
 
-  async enqueue(op) {
+  enqueue(op) {
     // op: { type: 'create'|'update'|'delete', local_id, payload }
-    syncQueue.push({ ...op, timestamp: Date.now() });
+
+    // Deduplication Strategy:
+    // If we have an existing 'create' or 'update' for this local_id,
+    // and the new op is also an 'update', just replace the payload/timestamp.
+    if (op.type === 'update') {
+      const existingIdx = syncQueue.findIndex(x => x.local_id === op.local_id && (x.type === 'create' || x.type === 'update'));
+      if (existingIdx !== -1) {
+        syncQueue[existingIdx].payload = { ...op.payload };
+        syncQueue[existingIdx].timestamp = Date.now();
+        saveToLocalStorage();
+        this.process();
+        return;
+      }
+    }
+
+    syncQueue.push({ ...op, timestamp: Date.now(), retryCount: 0 });
     saveToLocalStorage();
     this.process();
   }
 
   async process() {
+    // Never block UI. If already running, or no network, or no user session, wait.
     if (this.isProcessing || !supabaseClient || syncQueue.length === 0) return;
+
     this.isProcessing = true;
 
     while (syncQueue.length > 0) {
+      if (!navigator.onLine) {
+        this.isProcessing = false;
+        return;
+      }
+
       const op = syncQueue[0];
       const success = await this.executeOp(op);
 
       if (success) {
         syncQueue.shift();
         saveToLocalStorage();
-        this.retryBackoff = 5000; // Reset backoff on success
+        this.retryCount = 0; // Reset on any success
       } else {
-        console.warn("Sync failed, will retry later.", op);
-        // Exponential backoff or just wait for next trigger
-        setTimeout(() => { this.isProcessing = false; }, this.retryBackoff);
-        this.retryBackoff = Math.min(this.retryBackoff * 2, 60000); // Max 1 min
+        // FAIL SILENTLY: Keep in queue, increase backoff
+        this.retryCount++;
+        const backoff = Math.min(Math.pow(2, this.retryCount) * 1000 + Math.random() * 1000, this.maxBackoff);
+        console.log(`Sync delayed: retrying in ${Math.round(backoff / 1000)}s`);
+
+        setTimeout(() => {
+          this.isProcessing = false;
+          this.process();
+        }, backoff);
         return;
       }
     }
+
     this.isProcessing = false;
   }
 
   async executeOp(op) {
     try {
       if (op.type === 'create' || op.type === 'update') {
-        // Idempotent upsert using local_id as client_mutation_id
         const { data, error } = await supabaseClient
           .from('prompt_saves')
           .upsert({
-            user_id: user_session?.user?.id,
+            user_id: user_session?.user?.id || op.payload.user_id,
             device_id: device_id,
             title: op.payload.title,
             body: op.payload.body,
@@ -302,61 +290,42 @@ class SyncService {
             category: op.payload.category,
             favorite: op.payload.favorite,
             folder_id: op.payload.folder_id,
-            client_mutation_id: op.local_id, // Key for idempotency
-            updated_at: new Date().toISOString()
+            client_mutation_id: op.local_id,
+            updated_at: new Date(op.payload.updated_at || Date.now()).toISOString()
           }, {
-            onConflict: 'client_mutation_id',
-            ignoreDuplicates: false
+            onConflict: 'client_mutation_id'
           })
           .select()
           .single();
 
         if (error) throw error;
 
-        // Update local mirror state
-        const promptIndex = prompts.findIndex(p => p.id === op.local_id);
-        if (promptIndex > -1) {
-          prompts[promptIndex].cloud_id = data.id;
-          prompts[promptIndex].status = 'synced';
-          prompts[promptIndex].is_guest_data = false;
+        // Sync local reference
+        const idx = prompts.findIndex(p => p.id === op.local_id);
+        if (idx > -1) {
+          prompts[idx].cloud_id = data.id;
+          prompts[idx].status = 'synced';
           saveToLocalStorage();
-          renderPrompts(searchInput?.value, currentFilter);
         }
-      } else if (op.type === 'delete') {
-        const { error } = await supabaseClient
-          .from('prompt_saves')
-          .delete()
-          .eq('client_mutation_id', op.local_id);
-
-        if (error) throw error;
       }
       return true;
     } catch (err) {
-      console.error("Sync Exception:", err);
-      // Mark local as error if item still exists
-      const p = prompts.find(p => p.id === op.local_id);
-      if (p) p.status = 'error';
+      console.warn("Sync execution failed:", err.message || err);
+      // Fail silently to the user, the worker will retry.
       return false;
     }
   }
 
-  /**
-   * Migrate guest items to cloud
-   */
   async migrateGuestData() {
     if (!user_session) return;
-
-    const guestItems = prompts.filter(p => p.is_guest_data);
-    if (guestItems.length === 0) return;
-
-    for (const item of guestItems) {
-      // Check if already in queue to avoid duplicates
-      if (!syncQueue.find(op => op.local_id === item.id)) {
-        item.status = 'syncing';
+    const guestItems = prompts.filter(p => p.is_guest_data || !p.user_id);
+    guestItems.forEach(item => {
+      if (!syncQueue.find(q => q.local_id === item.id)) {
         item.user_id = user_session.user.id;
+        item.is_guest_data = false;
         this.enqueue({ type: 'create', local_id: item.id, payload: item });
       }
-    }
+    });
   }
 }
 
@@ -449,6 +418,8 @@ async function initApp() {
     });
     if (needsSave) saveToLocalStorage();
 
+
+
     // RENDER FAST: Show local prompts immediately for LCP
     renderPrompts();
 
@@ -482,6 +453,12 @@ async function initApp() {
         if (event === 'SIGNED_IN' && session) {
           updateAuthUI();
           renderUserProfile(session.user);
+          // Show welcome banner only once per login session
+          if (!sessionStorage.getItem('welcomeBannerShown')) {
+            const banner = document.getElementById('welcome-banner');
+            if (banner) banner.classList.remove('hidden');
+            sessionStorage.setItem('welcomeBannerShown', 'true');
+          }
 
           // Ensure profile exists in DB
           try {
@@ -491,8 +468,8 @@ async function initApp() {
               last_login: new Date().toISOString()
             });
 
-            // Always show onboarding after a fresh SIGNED_IN event
-            onboardingManager.show();
+
+
           } catch (e) { console.warn("Profile sync failed", e); }
 
           await migratePromptsToUser(session.user.id);
@@ -718,29 +695,49 @@ function setLoading(btnElement, isLoading) {
 
 // ---------- Migration Logic ----------
 async function migratePromptsToUser(userId) {
-  if (!supabaseClient) return;
+  if (!supabaseClient || !userId) return;
 
-  console.log("Starting Migration...");
+  console.log("Identity System: Initiating Guest -> Auth Migration...");
 
-  // 1. Migrate Local Guest Data
+  // 1. Flush any pending guest data currently in the local sync queue
+  // This ensures we're migrating the most up-to-date local state
   await syncService.migrateGuestData();
 
-  // 2. Fallback: Server-side migration for orphaned device data
-  if (device_id) {
-    const { data: devicePrompts, error } = await supabaseClient
+  // 2. Fetch server-side orphaned data for this device
+  // (Data that was saved while guest on this device but never synced/merged)
+  try {
+    const { data: orphanedPrompts, error } = await supabaseClient
       .from('prompt_saves')
-      .select('id')
+      .select('*')
       .eq('device_id', device_id)
       .is('user_id', null);
 
-    if (!error && devicePrompts && devicePrompts.length > 0) {
-      const idsToMigrate = devicePrompts.map(p => p.id);
-      await supabaseClient
-        .from('prompt_saves')
-        .update({ user_id: userId })
-        .in('id', idsToMigrate);
+    if (error) throw error;
+
+    if (orphanedPrompts && orphanedPrompts.length > 0) {
+      console.log(`Identity System: Found ${orphanedPrompts.length} orphaned guest prompts. Merging...`);
+
+      for (const p of orphanedPrompts) {
+        // Enqueue as an update to assign the user_id. 
+        // client_mutation_id (op.local_id) handles deduplication on the server.
+        syncService.enqueue({
+          type: 'update',
+          local_id: p.client_mutation_id || p.id,
+          payload: {
+            ...p,
+            user_id: userId,
+            is_guest_data: false
+          }
+        });
+      }
+      showToast(`Merged ${orphanedPrompts.length} guest prompts!`);
     }
+  } catch (err) {
+    console.warn("Identity System: Server-side migration failed (Retrying later)", err);
   }
+
+  // 3. Mark migration as complete locally to avoid redundant checks
+  localStorage.setItem('prompit_migration_complete', 'true');
 }
 
 
@@ -772,6 +769,8 @@ function setupEventListeners() {
     localStorage.setItem('theme', isDark ? 'dark' : 'light');
     applyTheme(); // Refresh styles if needed
   });
+
+
 
   // Export/Import
   exportOption.addEventListener('click', exportData);
@@ -819,9 +818,13 @@ function setupEventListeners() {
   // Form Submit
   promptForm.addEventListener('submit', handleFormSubmit);
 
-  // Search
+  // Search with Debounce
+  let searchDebounce = null;
   searchInput.addEventListener('input', (e) => {
-    renderPrompts(e.target.value, currentFilter);
+    clearTimeout(searchDebounce);
+    searchDebounce = setTimeout(() => {
+      renderPrompts(e.target.value, currentFilter);
+    }, 250);
   });
 
   // Quick Add
@@ -865,6 +868,9 @@ function setupEventListeners() {
     // but we want to ensure text updates correctly for complex HTML options
     // Actually setupCustomDropdown sets textContent = option.textContent, which includes emoji. Good.
   });
+
+  // History Panel Close
+  document.getElementById('closeHistoryPanel')?.addEventListener('click', closeHistoryPanel);
 
   // Quick Paste Enter Key
   document.getElementById('quickPaste').addEventListener('keydown', (e) => {
@@ -914,6 +920,14 @@ function setupEventListeners() {
       renderPrompts(searchInput.value, currentFilter);
     }
   });
+
+  // Preview Modal click outside
+  const previewModalOverlay = document.getElementById('previewModalOverlay');
+  if (previewModalOverlay) {
+    previewModalOverlay.addEventListener('click', (e) => {
+      if (e.target === previewModalOverlay) previewModalOverlay.classList.add('hidden');
+    });
+  }
 }
 
 function hideTemplateChoiceModal() {
@@ -1108,6 +1122,8 @@ async function handleFormSubmit(e) {
     is_guest_data: !user_session
   };
 
+
+
   if (id) {
     const index = prompts.findIndex(p => String(p.id) === String(id));
     if (index > -1) {
@@ -1125,7 +1141,8 @@ async function handleFormSubmit(e) {
   showToast('Prompt saved!');
 
   if (user_session) {
-    syncService.enqueue({ type: 'create', local_id: promptData.id, payload: promptData });
+    const type = id ? 'update' : 'create';
+    syncService.enqueue({ type, local_id: promptData.id, payload: promptData });
   }
   if (window.tagManager) await window.tagManager.syncTagsToCloud();
 }
@@ -1137,6 +1154,12 @@ function handleQuickAdd() {
   if (!text) return;
 
   const analysis = analyzePrompt(text);
+
+  // Auto-select category if we are filtering by one
+  if (currentFilter && currentFilter !== 'all') {
+    analysis.category = currentFilter;
+  }
+
   const newPrompt = {
     id: crypto.randomUUID(),
     title: analysis.title,
@@ -1595,8 +1618,10 @@ function renderPrompts(filterText = '', categoryFilter = 'all') {
   grid.innerHTML = '';
 
   // TASK 2: Pinned Welcome Prompt (Additive)
-  // ONLY show in Guest Mode (!user_session) and when in 'All Prompts' without search
-  if (!user_session && !filterText && categoryFilter === 'all' && !activeFolderId) {
+  // Show if library is empty, not dismissed, and we are in the main 'All Prompts' view
+  const isDismissed = localStorage.getItem('welcomeCardDismissed') === 'true';
+  const hasPrompts = prompts.length > 0;
+  if (!isDismissed && !hasPrompts && !filterText && categoryFilter === 'all' && !activeFolderId) {
     const pinnedCard = document.createElement('div');
     pinnedCard.className = 'prompt-card pinned-guide-card';
     pinnedCard.innerHTML = `
@@ -1637,110 +1662,83 @@ This is your personal prompt library — built to help you think, create, and mo
     grid.appendChild(pinnedCard);
   }
 
+  // --- Hybrid Fuzzy Search Logic (Fuse.js) ---
+  const query = (filterText || '').trim();
+  let results = [];
 
-  // --- Tier-1 Full-Text Search with Ranking & Highlighting ---
-  const query = (filterText || '').trim().toLowerCase();
-  let results = prompts
-    .map(p => {
-      // Prepare fields
-      const title = p.title || '';
-      const body = p.body || '';
-      const tags = Array.isArray(p.tags) ? p.tags : (typeof p.tags === 'string' ? p.tags.split(',').map(t => t.trim()) : []);
-      // Find matches
-      let matchType = null, matchIdx = -1, matchLen = 0, snippet = '', matchField = '', matchValue = '';
-      if (query && title.toLowerCase().includes(query)) {
-        matchType = 'title';
-        matchField = 'title';
-        matchValue = title;
-        matchIdx = title.toLowerCase().indexOf(query);
-        matchLen = query.length;
-      } else if (query && tags.some(tag => tag.toLowerCase().includes(query))) {
-        matchType = 'tag';
-        matchField = 'tags';
-        matchValue = tags.find(tag => tag.toLowerCase().includes(query)) || '';
-        matchIdx = matchValue.toLowerCase().indexOf(query);
-        matchLen = query.length;
-      } else if (query && body.toLowerCase().includes(query)) {
-        matchType = 'body';
-        matchField = 'body';
-        matchValue = body;
-        matchIdx = body.toLowerCase().indexOf(query);
-        matchLen = query.length;
+  // 1. Prepare Data for Search
+  const searchItems = prompts
+    .filter(p => (categoryFilter === 'all' || p.category === categoryFilter) && (!activeFolderId || p.folder_id === activeFolderId))
+    .map(p => ({
+      ...p,
+      // Flatten tags for easier indexing
+      tags_string: Array.isArray(p.tags) ? p.tags.join(' ') : (typeof p.tags === 'string' ? p.tags.replace(/,/g, ' ') : '')
+    }));
+
+  if (query && typeof Fuse !== 'undefined') {
+    const fuse = new Fuse(searchItems, {
+      keys: [
+        { name: 'title', weight: 0.5 },
+        { name: 'tags_string', weight: 0.3 },
+        { name: 'body', weight: 0.2 }
+      ],
+      includeMatches: true,
+      threshold: 0.4, // Balanced fuzziness
+      useExtendedSearch: true
+    });
+
+    results = fuse.search(query).map(r => {
+      // Find the snippet centered around the best match in the body
+      let snippet = r.item.body;
+      const bodyMatch = r.matches?.find(m => m.key === 'body');
+      if (bodyMatch && bodyMatch.indices.length > 0) {
+        const firstIdx = bodyMatch.indices[0][0];
+        const start = Math.max(0, firstIdx - 40);
+        const end = Math.min(r.item.body.length, firstIdx + query.length + 40);
+        snippet = (start > 0 ? '…' : '') + r.item.body.substring(start, end) + (end < r.item.body.length ? '…' : '');
+      } else {
+        snippet = r.item.body.substring(0, 150) + (r.item.body.length > 150 ? '…' : '');
       }
-      // Only include if matches query, category, AND folder
-      const matchCat = categoryFilter === 'all' || p.category === categoryFilter;
-      const matchFolder = !activeFolderId || p.folder_id === activeFolderId;
 
-      if (matchFolder && ((query && matchType && matchCat) || (!query && matchCat))) {
-        // Build snippet (for body, show context; for title/tag, show whole)
-        if (matchType === 'body' && matchIdx !== -1) {
-          const start = Math.max(0, matchIdx - 30);
-          const end = Math.min(body.length, matchIdx + matchLen + 30);
-          snippet = (start > 0 ? '…' : '') + body.substring(start, end) + (end < body.length ? '…' : '');
-        } else if (matchType === 'title') {
-          snippet = title;
-        } else if (matchType === 'tag') {
-          snippet = matchValue;
-        } else {
-          snippet = body.substring(0, 150) + (body.length > 150 ? '…' : '');
-        }
-        return { prompt: p, matchType, matchField, matchIdx, matchLen, snippet, matchValue };
-      }
-      return null;
-    })
-    .filter(Boolean);
-
-  // Ranking: title > tag > body
-  results.sort((a, b) => {
-    // Priority 1: Favorite prompts come first
-    if (a.prompt.favorite && !b.prompt.favorite) return -1;
-    if (!a.prompt.favorite && b.prompt.favorite) return 1;
-
-    // Priority 2: Search ranking (title > tag > body)
-    const rank = { title: 0, tag: 1, body: 2 };
-    if (rank[a.matchType] !== rank[b.matchType]) return rank[a.matchType] - rank[b.matchType];
-
-    // Priority 3: Newer first
-    return (new Date(b.prompt.date || 0)) - (new Date(a.prompt.date || 0));
-  });
-
-  // If no query, show all prompts (with favorites pinned at top)
-  if (!query) {
-    results = prompts
-      .filter(p => (categoryFilter === 'all' || p.category === categoryFilter) && (!activeFolderId || p.folder_id === activeFolderId))
-      .map(p => ({ prompt: p, matchType: null, snippet: p.body.substring(0, 150) + (p.body.length > 150 ? '…' : '') }))
+      return {
+        prompt: r.item,
+        matches: r.matches,
+        score: r.score,
+        snippet
+      };
+    });
+  } else {
+    // Default View: Sort by Favorite then Date
+    results = searchItems
       .sort((a, b) => {
-        // Favorites always appear first, then by creation date
-        if (a.prompt.favorite && !b.prompt.favorite) return -1;
-        if (!a.prompt.favorite && b.prompt.favorite) return 1;
-        return (new Date(b.prompt.date || 0)) - (new Date(a.prompt.date || 0));
-      });
+        if (a.favorite && !b.favorite) return -1;
+        if (!a.favorite && b.favorite) return 1;
+        return (new Date(b.date || 0)) - (new Date(a.date || 0));
+      })
+      .map(p => ({
+        prompt: p,
+        matches: null,
+        snippet: p.body.substring(0, 150) + (p.body.length > 150 ? '…' : '')
+      }));
   }
 
-
   if (results.length === 0) {
-    // Gentle empty state, only if no prompts at all
-    if (!query && prompts.length === 0) {
-      if (!user_session) {
-        grid.innerHTML += `
-          <div style="grid-column: 1/-1; text-align: center; color: var(--text-secondary); padding: 40px;">
-            <p style="font-size: 1.2rem;">No prompts found.</p>
-            <p>Create one to get started!</p>
-          </div>
-        `;
-      }
+    if (!query && prompts.length === 0 && !user_session) {
+      grid.innerHTML += `
+        <div style="grid-column: 1/-1; text-align: center; color: var(--text-secondary); padding: 40px;">
+          <p style="font-size: 1.2rem;">No prompts found.</p>
+          <p>Create one to get started!</p>
+        </div>
+      `;
     }
-    // If searching, do NOT show aggressive "No results" message
     return;
   }
 
-  // Sort results: Favorites first (by true/false), then by date
+  // Final Ranking: Favorites always at the top regardless of search score
   results.sort((a, b) => {
-    // Favorites always come first
     if (a.prompt.favorite && !b.prompt.favorite) return -1;
     if (!a.prompt.favorite && b.prompt.favorite) return 1;
-    // Then sort by creation date (newer first)
-    return (new Date(b.prompt.date || 0)) - (new Date(a.prompt.date || 0));
+    return a.score - b.score;
   });
 
   // Identify absolute newest prompt for the "New" badge
@@ -1790,58 +1788,58 @@ This is your personal prompt library — built to help you think, create, and mo
 
     // Copy Button SVG
     const copyIcon = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
-    // Fav Icon SVG
     const favIcon = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>`;
-    // Delete Icon
     const trashIcon = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>`;
-    // Edit Icon
     const editIcon = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>`;
 
-    // --- Highlighting ---
-    function highlight(text, q) {
-      if (!q || !text) return escapeHtml(text);
-      // Escape regex special chars in q
-      const safeQ = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const re = new RegExp(safeQ, 'gi');
-      return escapeHtml(text).replace(re, m => `<mark>${escapeHtml(m)}</mark>`);
+    // --- Highlighting Logic ---
+    function applyHighlights(text, key) {
+      if (!res.matches || !text) return escapeHtml(text);
+      const match = res.matches.find(m => m.key === key);
+      if (!match) return escapeHtml(text);
+
+      let result = '';
+      let lastIdx = 0;
+      match.indices.forEach(([start, end]) => {
+        result += escapeHtml(text.substring(lastIdx, start));
+        result += `<mark>${escapeHtml(text.substring(start, end + 1))}</mark>`;
+        lastIdx = end + 1;
+      });
+      result += escapeHtml(text.substring(lastIdx));
+      return result;
     }
 
-    // Highlight in snippet
-    let snippetHtml = res.snippet;
-    if (res.matchType && query) {
-      snippetHtml = highlight(res.snippet, query);
-    } else {
-      snippetHtml = escapeHtml(res.snippet);
-    }
+    const titleHtml = applyHighlights(p.title || 'Untitled', 'title');
 
-    // Highlight in title/tags if match
-    let titleHtml = escapeHtml(p.title);
-    if (res.matchType === 'title' && query) titleHtml = highlight(p.title, query);
+    // Highlight snippet
+    let snippetHtml = escapeHtml(res.snippet);
+    if (query) {
+      const safeQ = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp(`(${safeQ})`, 'gi');
+      snippetHtml = snippetHtml.replace(re, '<mark>$1</mark>');
+    }
 
     const rawTags = Array.isArray(p.tags) ? p.tags : (typeof p.tags === 'string' ? p.tags.split(',').map(t => t.trim()) : []);
     const displayedTags = rawTags.slice(0, 5);
     const hiddenCount = rawTags.length - 5;
 
     let tagsHtml = displayedTags.map(t => {
-      if (res.matchType === 'tag' && t.toLowerCase().includes(query)) return `<span class="tag"><mark>#${escapeHtml(t)}</mark></span>`;
+      if (query && t.toLowerCase().includes(query.toLowerCase())) {
+        return `<span class="tag"><mark>#${escapeHtml(t)}</mark></span>`;
+      }
       return `<span class="tag">#${escapeHtml(t)}</span>`;
     }).join('');
 
-    if (hiddenCount > 0) {
-      tagsHtml += `<span class="tag-more">+${hiddenCount}</span>`;
-    }
+    if (hiddenCount > 0) tagsHtml += `<span class="tag-more">+${hiddenCount}</span>`;
 
-    // Usage count (initialize to 0 if not set)
     const usageCount = typeof p.total_usage === 'number' ? p.total_usage : 0;
     const usageText = usageCount > 0 ? `Used ${usageCount} ${usageCount === 1 ? 'time' : 'times'}` : '';
 
     card.innerHTML = `
       <div class="card-header">
-        <div class="card-title">
-            ${titleHtml}
-            ${p.id === newestId ? '<span class="badge-new">New</span>' : ''}
-        </div>
+        <div class="card-title">${titleHtml} ${p.id === newestId ? '<span class="badge-new">New</span>' : ''}</div>
         <div class="card-actions">
+
            <button class="icon-btn fav-btn ${p.favorite ? 'active' : ''}" onclick="toggleFavorite('${p.id}')" title="Favorite">${favIcon}</button>
            <button class="icon-btn" onclick="copyPrompt('${p.id}')" title="Copy">${copyIcon}</button>
            <button class="icon-btn" onclick="openEditModal('${p.id}')" title="Edit">${editIcon}</button>
@@ -1852,9 +1850,7 @@ This is your personal prompt library — built to help you think, create, and mo
       <div class="card-body">${snippetHtml}</div>
       <div class="card-footer">
           <div class="footer-left">
-              <div class="tags">
-                  ${tagsHtml}
-              </div>
+              <div class="tags">${tagsHtml}</div>
               <span class="age-text">${timeAgo(p.date)}</span>
           </div>
           <div class="footer-right">
@@ -1868,6 +1864,8 @@ This is your personal prompt library — built to help you think, create, and mo
     grid.appendChild(card);
   });
 }
+
+
 
 function autoGenerateTitle(text) {
   return text.split('\n')[0].substring(0, 20) + (text.length > 20 ? '...' : '');
@@ -1930,6 +1928,7 @@ function saveToLocalStorage() {
   localStorage.setItem('folders', JSON.stringify(folders));
   localStorage.setItem('syncQueue', JSON.stringify(syncQueue));
   localStorage.setItem('categories', JSON.stringify(categories));
+
 }
 
 function applyTheme() {
@@ -2247,6 +2246,11 @@ function doCopy(text, id, silent = false) {
  * Smart Prompt Cleanup: The "Invisible Janitor"
  * Collapses blank lines, trims edges, and normalizes breaks on usage.
  */
+/**
+ * Smart Prompt Cleanup: The "Invisible Janitor"
+ * Normalizes line breaks, collapses excessive spacing, and removes invisible junk.
+ * Runs only at 'Use' time. Original saved data remains untouched.
+ */
 function cleanPromptText(text) {
   if (!text) return '';
 
@@ -2254,19 +2258,13 @@ function cleanPromptText(text) {
     // 1. Normalize line endings & remove invisible junk
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')
-    .replace(/\u00A0/g, ' ') // Normalize non-breaking spaces to regular spaces
-    .replace(/[\u200B-\u200D\uFEFF]/g, '') // Strip zero-width junk
-    // 2. Process line by line
-    .split('\n')
-    .map(line => {
-      let l = line.trim();
-      // Smart Bullet Spacing: "-Item" -> "- Item"
-      return l.replace(/^([-*+•])(\S)/, '$1 $2');
-    })
-    .join('\n')
-    // 3. Collapse multiple empty lines (max 1)
+    .replace(/\u00A0/g, ' ') // Normalize non-breaking spaces
+    .replace(/[\u200B-\u200D\uFEFF]/g, '') // Strip zero-width spaces/junk
+
+    // 2. Collapse sequential blank lines (3+ into 2)
     .replace(/\n{3,}/g, '\n\n')
-    // 4. Final edge trim
+
+    // 3. Final document-level trim
     .trim();
 }
 
@@ -2292,8 +2290,11 @@ function openModal() {
   document.getElementById('promptId').value = '';
   promptForm.reset();
   document.getElementById('modalTitle').textContent = 'Add Prompt';
-  document.getElementById('category').value = 'other';
-  updateCategoryDropdownUI(modalCategoryDropdown, 'other');
+
+  // Pre-select category if filtering
+  const defaultCat = (currentFilter && currentFilter !== 'all') ? currentFilter : 'other';
+  document.getElementById('category').value = defaultCat;
+  updateCategoryDropdownUI(modalCategoryDropdown, defaultCat);
 
   // Reset manual interaction tracking
   hasManuallySetCategory = false;
@@ -2600,81 +2601,8 @@ function capitalize(s) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-// ---------- Onboarding Logic ----------
-class OnboardingManager {
-  constructor() {
-    this.modal = document.getElementById('onboardingModal');
-    this.slider = document.getElementById('onboardingSlides');
-    this.dots = document.querySelectorAll('.dot');
-    this.prevBtn = document.getElementById('prevSlide');
-    this.nextBtn = document.getElementById('nextSlide');
-    this.skipBtn = document.getElementById('skipOnboarding');
-    this.finishBtn = document.getElementById('finishOnboarding');
-    this.currentIndex = 0;
-    this.totalSlides = 5;
 
-    this.init();
-  }
 
-  init() {
-    if (!this.modal) return;
-    this.nextBtn.addEventListener('click', () => this.goToSlide(this.currentIndex + 1));
-    this.prevBtn.addEventListener('click', () => this.goToSlide(this.currentIndex - 1));
-    this.skipBtn.addEventListener('click', () => this.complete());
-    this.finishBtn.addEventListener('click', () => this.complete());
-
-    document.addEventListener('keydown', (e) => {
-      if (!this.modal.classList.contains('hidden')) {
-        if (e.key === 'ArrowRight') this.goToSlide(this.currentIndex + 1);
-        if (e.key === 'ArrowLeft') this.goToSlide(this.currentIndex - 1);
-        if (e.key === 'Escape') this.complete();
-      }
-    });
-
-    // Dot navigation
-    this.dots.forEach((dot, idx) => {
-      dot.addEventListener('click', () => this.goToSlide(idx));
-    });
-  }
-
-  goToSlide(index) {
-    if (index < 0 || index >= this.totalSlides) return;
-    this.currentIndex = index;
-    this.updateUI();
-  }
-
-  updateUI() {
-    // Slide transition
-    this.slider.style.transform = `translateX(-${this.currentIndex * 100}%)`;
-
-    // Active slide state for micro-animations
-    const slides = document.querySelectorAll('.onboarding-slide');
-    slides.forEach((s, idx) => {
-      s.classList.toggle('active', idx === this.currentIndex);
-    });
-
-    // Update dots
-    this.dots.forEach((dot, idx) => {
-      dot.classList.toggle('active', idx === this.currentIndex);
-    });
-
-    // Update buttons
-    this.prevBtn.disabled = this.currentIndex === 0;
-    this.nextBtn.style.visibility = this.currentIndex === this.totalSlides - 1 ? 'hidden' : 'visible';
-  }
-
-  async show() {
-    this.currentIndex = 0;
-    this.updateUI();
-    this.modal.classList.remove('hidden');
-  }
-
-  async complete() {
-    this.modal.classList.add('hidden');
-  }
-}
-
-const onboardingManager = new OnboardingManager();
 
 function setupRealtime() {
   if (supabaseClient) {
@@ -2720,17 +2648,33 @@ function renderUserProfile(user) {
   const avatar = slot.querySelector('.profile-avatar');
   const menu = slot.querySelector('.profile-dropdown-menu');
 
-  avatar.addEventListener('click', (e) => {
+  avatar.onclick = (e) => {
     e.stopPropagation();
-    menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
-  });
-
-  document.addEventListener('click', () => {
-    if (menu) menu.style.display = 'none';
-  });
+    menu.classList.toggle('show');
+  };
 
   document.getElementById('profileLogoutBtn').addEventListener('click', handleLogout);
+
+  // Note: Global listener handles closing. Check initApp or a global setup logic.
 }
+
+// Add Global Click Listener for Dropdowns (Should be outside renderUserProfile)
+if (!window.activeGlobalClickListener) {
+  document.addEventListener('click', (e) => {
+    const menus = document.querySelectorAll('.profile-dropdown-menu.show');
+    menus.forEach(m => {
+      // If click is NOT inside this menu and NOT inside its avatar/trigger
+      // Note: can't easily find avatar from menu here without traversing, 
+      // but if we are clicking outside menu it's mostly fine. 
+      // Better: check if click target is NOT an avatar.
+      if (!m.contains(e.target) && !e.target.closest('.profile-avatar')) {
+        m.classList.remove('show');
+      }
+    });
+  });
+  window.activeGlobalClickListener = true;
+}
+
 
 // ADD THIS: Centralized Logout Handler
 async function handleLogout() {
@@ -2739,6 +2683,7 @@ async function handleLogout() {
   renderUserProfile(null);
   updateAuthUI();
   showToast('Logged out');
+  sessionStorage.removeItem('welcomeBannerShown');
 
   // Hide banner
   const banner = document.getElementById('welcome-banner');
@@ -2994,7 +2939,8 @@ function enterViewerMode(sharedParams) {
   // Bind Actions
   const copyBtn = document.getElementById('sharedCopyBtn');
   copyBtn.onclick = () => {
-    navigator.clipboard.writeText(snapshot.body);
+    const cleaned = cleanPromptText(snapshot.body);
+    navigator.clipboard.writeText(cleaned);
     copyBtn.textContent = "Copied!";
     setTimeout(() => copyBtn.textContent = "Copy to Clipboard", 2000);
   };
@@ -3044,6 +2990,15 @@ window.addEventListener('load', () => {
   console.log("Window Load Event - Starting App Boot...");
   initApp();
   NetworkManager.init();
+
+  // Start background sync if queue is not empty
+  syncService.process();
+});
+
+// Resume sync when network returns
+window.addEventListener('online', () => {
+  console.log("Network back online - resuming sync...");
+  syncService.process();
 });
 
 // Re-expose for debug if needed
@@ -3051,3 +3006,5 @@ window.initApp = initApp;
 window.prompts = prompts;
 window.folders = folders;
 window.supabaseClient = supabaseClient;
+
+

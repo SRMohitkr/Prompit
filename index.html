@@ -18,6 +18,7 @@
     <script src="https://unpkg.com/compromise-dates" defer></script>
     <script src="./cloudConfig.js" defer></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/fuse.js@7.0.0"></script>
     <script src="app.js?v=10" defer></script>
 </head>
 
@@ -151,6 +152,21 @@
 
         <!-- SHARED VIEW CONTAINER (Hidden by default) -->
         <div id="sharedViewContainer" class="shared-view-container hidden">
+            <!-- Full Professional Navbar -->
+            <nav class="shared-navbar glass-panel">
+                <div class="nav-brand">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                        <line x1="16" y1="13" x2="8" y2="13"></line>
+                    </svg>
+                    <span class="brand-name">Prompit</span>
+                </div>
+                <div class="nav-actions">
+                    <button class="primary-btn small" onclick="window.location.reload()">Try Prompit Free</button>
+                </div>
+            </nav>
             <div class="glass-panel shared-card-wrapper">
                 <div class="shared-header">
                     <div class="logo-area small">
@@ -246,6 +262,7 @@
                             <span class="icon">🌓</span>
                             <span class="text">Switch Theme</span>
                         </div>
+
                         <div class="dropdown-option" id="loginOption" style="color:var(--primary-color);">
                             <span class="icon">🔐</span>
                             <span class="text">Login / Signup</span>
@@ -396,6 +413,8 @@
 
 
 
+
+
     <!-- Variable Selection Modal -->
     <div id="varSelectOverlay" class="modal-overlay hidden">
         <div class="modal glass-panel var-select-modal">
@@ -528,88 +547,11 @@
         </div>
     </section>
 
-    <!-- Onboarding Slider Modal -->
-    <div id="onboardingModal" class="modal-overlay hidden">
-        <div class="onboarding-bg-blobs">
-            <div class="blob blob-1"></div>
-            <div class="blob blob-2"></div>
-        </div>
-        <div class="onboarding-modal glass-panel">
-            <button class="skip-btn" id="skipOnboarding">Skip</button>
-            <div class="onboarding-slider">
-                <div class="onboarding-slides" id="onboardingSlides">
-                    <!-- Slide 1 -->
-                    <div class="onboarding-slide active" data-index="0">
-                        <div class="slide-badge">Core Concept</div>
-                        <div class="slide-visual">
-                            <img src="assets/onboarding/onboarding_memory.png" alt="Memory" class="onboarding-img">
-                        </div>
-                        <h2>What Prompit Is</h2>
-                        <p>Prompit remembers your best prompts so you don’t have to. Built for speed and focus.</p>
-                    </div>
-                    <!-- Slide 2 -->
-                    <div class="onboarding-slide" data-index="1">
-                        <div class="slide-badge">Workflow</div>
-                        <div class="slide-visual">
-                            <img src="assets/onboarding/onboarding_save.png" alt="Save" class="onboarding-img">
-                        </div>
-                        <h2>Save Without Thinking</h2>
-                        <p>Save prompts instantly. No friction. No loss. Your thoughts, safely captured.</p>
-                    </div>
-                    <!-- Slide 3 -->
-                    <div class="onboarding-slide" data-index="2">
-                        <div class="slide-badge">Search</div>
-                        <div class="slide-visual">
-                            <img src="assets/onboarding/onboarding_search.png" alt="Search" class="onboarding-img">
-                        </div>
-                        <h2>Find Anything Instantly</h2>
-                        <p>If you remember one line, Prompit finds it. Search that stays ahead of you.</p>
-                    </div>
-                    <!-- Slide 4 -->
-                    <div class="onboarding-slide" data-index="3">
-                        <div class="slide-badge">Utility</div>
-                        <div class="slide-visual">
-                            <img src="assets/onboarding/onboarding_reuse.png" alt="Reuse" class="onboarding-img">
-                        </div>
-                        <h2>Reuse, Don’t Rewrite</h2>
-                        <p>Your best prompts should work again and again. Copy and template with one click.</p>
-                    </div>
-                    <!-- Slide 5 -->
-                    <div class="onboarding-slide" data-index="4">
-                        <div class="slide-badge">Focus</div>
-                        <div class="slide-visual">
-                            <img src="assets/onboarding/onboarding_focus.png" alt="Focus" class="onboarding-img">
-                        </div>
-                        <h2>Stays Out of Your Way</h2>
-                        <p>Calm. Private. Built for daily work. Welcome to your new workspace.</p>
-                        <button id="finishOnboarding" class="primary-btn finish-btn">Start using Prompit</button>
-                    </div>
-                </div>
-            </div>
-            <div class="onboarding-controls">
-                <button class="nav-btn prev-btn" id="prevSlide" disabled>
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <polyline points="15 18 9 12 15 6"></polyline>
-                    </svg>
-                </button>
-                <div class="progress-dots" id="progressDots">
-                    <span class="dot active" data-index="0"></span>
-                    <span class="dot" data-index="1"></span>
-                    <span class="dot" data-index="2"></span>
-                    <span class="dot" data-index="3"></span>
-                    <span class="dot" data-index="4"></span>
-                </div>
-                <button class="nav-btn next-btn" id="nextSlide">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <polyline points="9 18 15 12 9 6"></polyline>
-                    </svg>
-                </button>
-            </div>
-        </div>
-    </div>
+
 
     <footer class="app-footer glass-panel">
-        <div class="footer-text">Made with <span>❤️</span> by SR.Mohitkr</div>
+        <div class="footer-text">Made with <span>❤️</span> by SR.Mohitkr <span
+                style="opacity:0.4; font-size: 0.8em; margin-left: 10px;">Saved with Prompit</span></div>
         <div class="footer-links">
             <a href="https://www.youtube.com/@sr.mohitkrofficial" target="_blank" title="YouTube" class="youtube-link">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -636,6 +578,12 @@
     </footer>
 
     <!-- Scripts moved to head with defer -->
+
+    <!-- Bookmarklet Modal -->
+
+
+
+
 
 </body>
 
