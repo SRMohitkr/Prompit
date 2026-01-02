@@ -35,6 +35,17 @@ try { syncQueue = JSON.parse(localStorage.getItem('syncQueue') || '[]'); } catch
 
 let folders = [];
 try { folders = JSON.parse(localStorage.getItem('folders') || '[]'); } catch (e) { console.error('Resetting Folders', e); localStorage.removeItem('folders'); }
+
+// Default Folder
+if (folders.length === 0) {
+  folders.push({
+    id: crypto.randomUUID(),
+    name: 'Folder',
+    user_id: null,
+    created_at: new Date().toISOString()
+  });
+  localStorage.setItem('folders', JSON.stringify(folders));
+}
 let activeFolderId = null; // null = 'All Prompts'
 
 // History Feature Toggle
@@ -125,6 +136,7 @@ class SyncService {
             category: op.payload.category,
             favorite: op.payload.favorite,
             folder_id: op.payload.folder_id,
+            total_usage: op.payload.total_usage || 0,
             client_mutation_id: op.local_id,
             updated_at: new Date(op.payload.updated_at || Date.now()).toISOString()
           }, {
@@ -563,7 +575,7 @@ async function migratePromptsToUser(userId) {
   }
 
   // 3. Mark migration as complete locally to avoid redundant checks
-  localStorage.setItem('prompit_migration_complete', 'true');
+  localStorage.setItem('promper_saver_migration_complete', 'true');
 }
 
 
@@ -829,7 +841,7 @@ function setupCustomDropdown(dropdownElement, onSelect) {
 
 function setupBookmarklet() {
   const origin = window.location.origin;
-  const script = `(function(){const s=window.getSelection().toString();const w=Math.min(screen.width-20,480);const h=Math.min(screen.height-20,420);const l=(screen.width/2)-(w/2);const t=(screen.height/2)-(h/2);window.open("${origin}/bridge.html?text="+encodeURIComponent(s)+"&url="+encodeURIComponent(window.location.href),"prompitCapture","width="+w+",height="+h+",top="+t+",left="+l+",resizable=yes,scrollbars=yes,status=no,location=no,toolbar=no,menubar=no");})();`;
+  const script = `(function(){const s=window.getSelection().toString();const w=Math.min(screen.width-20,480);const h=Math.min(screen.height-20,420);const l=(screen.width/2)-(w/2);const t=(screen.height/2)-(h/2);window.open("${origin}/bridge.html?text="+encodeURIComponent(s)+"&url="+encodeURIComponent(window.location.href),"promper_saverCapture","width="+w+",height="+h+",top="+t+",left="+l+",resizable=yes,scrollbars=yes,status=no,location=no,toolbar=no,menubar=no");})();`;
 
   if (bookmarkletLink) {
     bookmarkletLink.href = "javascript:" + script;
@@ -1192,6 +1204,7 @@ async function loadPromptsFromSupabaseAndMerge() {
         device_id: row.device_id,
         user_id: row.user_id,
         folder_id: row.folder_id,
+        total_usage: row.total_usage || 0,
         storage: 'cloud'
       });
     });
@@ -1253,8 +1266,10 @@ async function loadPromptsFromSupabaseAndMerge() {
 
 // ---------- Categories Logic ----------
 function addNewCategory(catName) {
-  if (!categories.includes(catName)) {
-    categories.push(catName);
+  const clean = catName.trim();
+  const cleanLower = clean.toLowerCase();
+  if (clean && !categories.map(c => c.toLowerCase()).includes(cleanLower)) {
+    categories.push(clean);
     localStorage.setItem('categories', JSON.stringify(categories));
     renderCategories();
     syncCategoriesToCloud();
@@ -1263,10 +1278,20 @@ function addNewCategory(catName) {
 
 function renderCategories() {
   // 1. Filter Dropdown
+  // Use a map to handle duplicates case-insensitively and keep unique ones
+  const uniqueCategories = [];
+  const seen = new Set();
+  categories.forEach(c => {
+    if (!seen.has(c.toLowerCase())) {
+      seen.add(c.toLowerCase());
+      uniqueCategories.push(c);
+    }
+  });
+
   const filterHTML = `
         <div class="dropdown-option" data-value="all">All Categories</div>
-        ${categories.map(c => `
-            <div class="dropdown-option" data-value="${c}">${capitalize(c)}</div>
+        ${uniqueCategories.map(c => `
+            <div class="dropdown-option" data-value="${c.toLowerCase()}">${capitalize(c)}</div>
         `).join('')}
     `;
   customCategoryDropdown.querySelector('.dropdown-options').innerHTML = filterHTML;
@@ -1544,7 +1569,7 @@ function renderPrompts(filterText = '', categoryFilter = 'all') {
     pinnedCard.className = 'prompt-card pinned-guide-card';
     pinnedCard.innerHTML = `
         <div class="card-header">
-    <div class="card-title">👋 Welcome to Prompit</div>
+    <div class="card-title">👋 Welcome to Promper Saver</div>
     <div class="card-actions">
         <button class="icon-btn" onclick="dismissWelcomeCard(event)" title="Dismiss Welcome Guide">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -1586,7 +1611,13 @@ This is your personal prompt library — built to help you think, create, and mo
 
   // 1. Prepare Data for Search
   const searchItems = prompts
-    .filter(p => (categoryFilter === 'all' || p.category === categoryFilter) && (!activeFolderId || p.folder_id === activeFolderId))
+    .filter(p => {
+      const pCat = (p.category || 'other').toLowerCase();
+      const fCat = categoryFilter.toLowerCase();
+      const categoryMatch = (fCat === 'all' || pCat === fCat);
+      const folderMatch = (!activeFolderId || String(p.folder_id) === String(activeFolderId));
+      return categoryMatch && folderMatch;
+    })
     .map(p => ({
       ...p,
       // Flatten tags for easier indexing
@@ -1850,7 +1881,8 @@ function saveToLocalStorage() {
 }
 
 function applyTheme() {
-  if (localStorage.getItem('theme') === 'dark') {
+  const currentTheme = localStorage.getItem('theme') || 'dark'; // Default to dark
+  if (currentTheme === 'dark') {
     document.body.classList.add('dark-mode');
   } else {
     document.body.classList.remove('dark-mode');
@@ -1952,9 +1984,6 @@ function handleVariableCopy() {
   doCopy(finalPrompt, activeVariablePrompt.id);
   variableModalOverlay.classList.add('hidden');
   showToast('Template filled and copied to clipboard.');
-
-  // Update usage count
-  updateUsageCount(activeVariablePrompt.id);
 }
 
 copyFinalBtn.onclick = handleVariableCopy;
@@ -2181,17 +2210,20 @@ function cleanPromptText(text) {
 }
 
 async function updateUsageCount(id) {
-  const idx = prompts.findIndex(x => x.id === id);
+  const idx = prompts.findIndex(x => String(x.id) === String(id));
   if (idx === -1) return;
 
   prompts[idx].total_usage = (prompts[idx].total_usage || 0) + 1;
+  prompts[idx].updated_at = new Date().toISOString();
   saveToLocalStorage();
 
-  if (user_session && prompts[idx].cloud_id) {
-    await supabaseClient.from('prompt_saves').update({
-      total_usage: prompts[idx].total_usage
-    }).eq('id', prompts[idx].cloud_id);
+  // Use the standard sync service for consistency and retry support
+  if (user_session) {
+    syncService.enqueue({ type: 'update', local_id: id, payload: prompts[idx] });
   }
+
+  // Refresh UI immediately
+  renderPrompts();
 }
 
 
@@ -2280,7 +2312,7 @@ function exportData() {
   const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(prompts));
   const downloadAnchorNode = document.createElement('a');
   downloadAnchorNode.setAttribute("href", dataStr);
-  downloadAnchorNode.setAttribute("download", "prompit_backup.json");
+  downloadAnchorNode.setAttribute("download", "promper_saver_backup.json");
   document.body.appendChild(downloadAnchorNode);
   downloadAnchorNode.click();
   downloadAnchorNode.remove();
@@ -2563,9 +2595,17 @@ function renderUserProfile(user) {
   avatar.onclick = (e) => {
     e.stopPropagation();
     menu.classList.toggle('show');
+    // Hide others
+    document.querySelectorAll('.custom-dropdown').forEach(d => d.classList.remove('open'));
   };
 
-  document.getElementById('profileLogoutBtn').addEventListener('click', handleLogout);
+  const logoutBtn = slot.querySelector('#profileLogoutBtn');
+  if (logoutBtn) {
+    logoutBtn.onclick = (e) => {
+      e.stopPropagation();
+      handleLogout();
+    };
+  }
 
   // Note: Global listener handles closing. Check initApp or a global setup logic.
 }
@@ -2638,7 +2678,7 @@ const NetworkManager = {
   },
 
   async checkConnection(manualRetry = false) {
-    if (!manualRetry && localStorage.getItem('prompit_stay_guest') === '1') return;
+    if (!manualRetry && localStorage.getItem('promper_saver_stay_guest') === '1') return;
 
     if (manualRetry) {
       const originalText = this.retryBtn.textContent;
@@ -2681,7 +2721,7 @@ const NetworkManager = {
   },
 
   show() {
-    if (localStorage.getItem('prompit_stay_guest') === '1') return;
+    if (localStorage.getItem('promper_saver_stay_guest') === '1') return;
     this.overlay.classList.remove('hidden');
   },
 
@@ -2690,7 +2730,7 @@ const NetworkManager = {
   },
 
   stayGuest() {
-    localStorage.setItem('prompit_stay_guest', '1');
+    localStorage.setItem('promper_saver_stay_guest', '1');
     this.hide();
     showToast('Offline Mode Active');
   },

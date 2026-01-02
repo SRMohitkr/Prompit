@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Prompit</title>
+    <title>Promper</title>
     <link rel="stylesheet" href="style.css">
     <meta name="description" content="A beautiful, local-storage based prompt organizer.">
     <meta name="description" content="A beautiful, local-storage based prompt organizer.">
@@ -22,22 +22,16 @@
     <script src="app.js?v=10" defer></script>
 </head>
 
-<body>
+<body class="dark-mode">
 
     <!-- Auth Overlay -->
     <div id="authOverlay" class="auth-overlay hidden">
         <div class="auth-card glass-panel">
             <div class="auth-header">
-                <div class="auth-icon">
-                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                        stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                        <polyline points="14 2 14 8 20 8"></polyline>
-                        <line x1="12" y1="18" x2="12" y2="12"></line>
-                        <line x1="9" y1="15" x2="15" y2="15"></line>
-                    </svg>
+                <div class="auth-icon-new">
+                    <img src="logo.png" alt="Promper Saver Logo" class="brand-logo-img">
                 </div>
-                <h2>Welcome to Prompit</h2>
+                <h2>Welcome to Promper Saver</h2>
                 <p>Sign in to sync your prompts across all your devices.</p>
             </div>
 
@@ -155,30 +149,18 @@
             <!-- Full Professional Navbar -->
             <nav class="shared-navbar glass-panel">
                 <div class="nav-brand">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-                        stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                        <polyline points="14 2 14 8 20 8"></polyline>
-                        <line x1="16" y1="13" x2="8" y2="13"></line>
-                    </svg>
-                    <span class="brand-name">Prompit</span>
+                    <img src="logo.png" alt="Promper Saver Logo" class="brand-logo-img small">
+                    <span class="brand-name">Promper Saver</span>
                 </div>
                 <div class="nav-actions">
-                    <button class="primary-btn small" onclick="window.location.reload()">Try Prompit Free</button>
+                    <button class="primary-btn small" onclick="window.location.reload()">Try Promper Saver Free</button>
                 </div>
             </nav>
             <div class="glass-panel shared-card-wrapper">
                 <div class="shared-header">
                     <div class="logo-area small">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                            <polyline points="14 2 14 8 20 8"></polyline>
-                            <line x1="16" y1="13" x2="8" y2="13"></line>
-                            <line x1="16" y1="17" x2="8" y2="17"></line>
-                            <polyline points="10 9 9 9 8 9"></polyline>
-                        </svg>
-                        <span>Shared via Prompit</span>
+                        <img src="logo.png" alt="Promper Saver Logo" class="brand-logo-img micro">
+                        <span>Shared via Promper Saver</span>
                     </div>
                 </div>
 
@@ -190,7 +172,7 @@
                     <button id="sharedCopyBtn" class="primary-btn full-width">Copy to Clipboard</button>
                     <button id="sharedSaveBtn" class="secondary-btn full-width" style="margin-top:10px;">Save to My
                         Library</button>
-                    <p class="shared-meta">Prompit does not track you. This link is a static snapshot.</p>
+                    <p class="shared-meta">Promper Saver does not track you. This link is a static snapshot.</p>
                 </div>
             </div>
         </div>
@@ -198,15 +180,8 @@
         <!-- Header -->
         <header class="glass-panel">
             <div class="logo-area">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                    stroke-linecap="round" stroke-linejoin="round" fetchpriority="high">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                    <polyline points="14 2 14 8 20 8"></polyline>
-                    <line x1="16" y1="13" x2="8" y2="13"></line>
-                    <line x1="16" y1="17" x2="8" y2="17"></line>
-                    <polyline points="10 9 9 9 8 9"></polyline>
-                </svg>
-                <h1>Prompit Saver</h1>
+                <img src="logo.png" alt="Promper Saver Logo" class="brand-logo-img">
+                <h1>Promper Saver</h1>
             </div>
 
             <div class="controls">
@@ -505,7 +480,7 @@
 
             <!-- Copy Link Box -->
             <div class="share-notion-box">
-                <input type="text" id="shareInputLink" readonly value="https://prompit.app/s/..." />
+                <input type="text" id="shareInputLink" readonly value="https://promper-saver.app/s/..." />
                 <button id="shareCopyBtnMain" class="primary-btn small-radius">Copy</button>
             </div>
 
@@ -524,8 +499,8 @@
 
     <!-- About Us Section -->
     <section class="about-section glass-panel">
-        <h2>About Prompit</h2>
-        <p>Prompt Saver is your personal sanctuary for creativity. Designed for writers, coders, and artists, it helps
+        <h2>About Promper Saver</h2>
+        <p>Promper Saver is your personal sanctuary for creativity. Designed for writers, coders, and artists, it helps
             you organize, store, and quickly access your most valuable prompts. Whether you're crafting the next great
             novel, debugging complex code, or generating AI art, we keep your inspiration just a click away.</p>
         <div class="features-grid">
@@ -550,8 +525,7 @@
 
 
     <footer class="app-footer glass-panel">
-        <div class="footer-text">Made with <span>❤️</span> by SR.Mohitkr <span
-                style="opacity:0.4; font-size: 0.8em; margin-left: 10px;">Saved with Prompit</span></div>
+        <div class="footer-text">Made with <span>❤️</span> by SR.Mohitkr</div>
         <div class="footer-links">
             <a href="https://www.youtube.com/@sr.mohitkrofficial" target="_blank" title="YouTube" class="youtube-link">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -597,8 +571,8 @@
                                 class="highlight-word">secret key</span> to your memory.</p>
                         <div style="margin-top: 25px;">
                             <a id="bookmarkletLink" href="#" onclick="return false;"
-                                style="display: inline-block; padding: 14px 28px; background: var(--primary-color); color: white; border-radius: 12px; text-decoration: none; font-weight: 700; cursor: move; box-shadow: 0 4px 15px rgba(74, 144, 226, 0.3);">🚀
-                                Save to Prompit</a>
+                                style="display: inline-block; padding: 14px 28px; background: var(--primary-gradient); color: white; border-radius: 12px; text-decoration: none; font-weight: 700; cursor: move; box-shadow: 0 4px 15px rgba(74, 144, 226, 0.3);">🚀
+                                Save to Promper Saver</a>
                         </div>
                     </div>
                     <!-- Page 2: Usage -->
@@ -615,7 +589,7 @@
                     <div class="slider-page">
                         <div class="illustration">⚡</div>
                         <h3>Step 3: Success</h3>
-                        <p>Press <b>⌘ + Enter</b> to save <span class="highlight-word">instantly</span>. Prompit
+                        <p>Press <b>⌘ + Enter</b> to save <span class="highlight-word">instantly</span>. Promper Saver
                             auto-detects titles and categories for you.
                         </p>
                         <div
