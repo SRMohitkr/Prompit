@@ -81,17 +81,55 @@ body {
     box-shadow: var(--glass-shadow);
 }
 
-/* Header */
+/* Header: Floating Premium */
 header {
     display: flex;
     flex-wrap: wrap;
     justify-content: space-between;
     align-items: center;
-    padding: 20px;
+    padding: 15px 30px;
     margin-bottom: 30px;
     gap: 20px;
-    position: relative;
-    z-index: 50;
+
+    /* Sticky & Floating Logic */
+    position: sticky;
+    top: 20px;
+    z-index: 1000;
+    margin-top: 10px;
+
+    /* "Island" Look */
+    border-radius: 20px;
+    /* Rounded corners */
+    background: rgba(255, 255, 255, 0.4);
+    /* Subtle initial glass */
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+
+    transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+body.dark-mode header {
+    background: rgba(30, 30, 30, 0.4);
+    border-color: rgba(255, 255, 255, 0.05);
+}
+
+/* Docked State (via JS) */
+header.is-pinned {
+    top: 0;
+    margin-top: 0;
+    border-radius: 0 0 20px 20px;
+    /* Flatten top, round bottom */
+    border: none;
+    border-bottom: 1px solid var(--glass-border);
+    padding: 12px 35px;
+    /* Sleeker height */
+
+    background: var(--glass-bg);
+    /* Stronger glass */
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    box-shadow: var(--glass-shadow);
 }
 
 .logo-area {

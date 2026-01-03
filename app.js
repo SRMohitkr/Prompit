@@ -685,14 +685,25 @@ function setupEventListeners() {
   // Quick Add
   document.getElementById('quickAddBtn').addEventListener('click', handleQuickAdd);
 
-  // FAB Hide on Scroll
+  // FAB Hide on Scroll & Header Floating
   let lastScrollY = window.scrollY;
+  const header = document.querySelector('header');
+
   window.addEventListener('scroll', () => {
+    // FAB Toggle
     if (window.scrollY > lastScrollY && window.scrollY > 100) {
       fab.classList.add('hide-fab');
     } else {
       fab.classList.remove('hide-fab');
     }
+
+    // Header Floating Toggle (Docking)
+    if (window.scrollY > 20) {
+      header?.classList.add('is-pinned');
+    } else {
+      header?.classList.remove('is-pinned');
+    }
+
     lastScrollY = window.scrollY;
   });
 
