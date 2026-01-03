@@ -202,7 +202,14 @@
 
         // 2. Client Init
         if (SUPABASE_URL && SUPABASE_KEY) {
-            supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+            supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+                auth: {
+                    flowType: 'pkce',
+                    detectSessionInUrl: true,
+                    persistSession: true,
+                    autoRefreshToken: true
+                }
+            });
         }
 
         function analyzePrompt(text) {

@@ -181,6 +181,12 @@ const syncService = new SyncService();
 
 if (SUPABASE_URL && SUPABASE_KEY) {
   supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+    auth: {
+      flowType: 'pkce',
+      detectSessionInUrl: true,
+      persistSession: true,
+      autoRefreshToken: true
+    },
     global: { headers: { 'x-device-id': device_id } }
   });
 } else {
@@ -697,11 +703,25 @@ function setupEventListeners() {
       fab.classList.remove('hide-fab');
     }
 
-    // Header Floating Toggle (Docking)
-    if (window.scrollY > 20) {
-      header?.classList.add('is-pinned');
+    // Header Floating Toggle (Docking) - Classic Desktop
+    if (window.innerWidth > 600) {
+      if (window.scrollY > 20) {
+        header?.classList.add('is-pinned');
+      } else {
+        header?.classList.remove('is-pinned');
+      }
     } else {
-      header?.classList.remove('is-pinned');
+      // Mobile: Independent Search Float
+      const searchBox = document.querySelector('.search-box');
+      const controls = document.querySelector('header .controls');
+
+      if (window.scrollY > 50) {
+        searchBox?.classList.add('mobile-floating');
+        controls?.classList.add('search-active');
+      } else {
+        searchBox?.classList.remove('mobile-floating');
+        controls?.classList.remove('search-active');
+      }
     }
 
     lastScrollY = window.scrollY;

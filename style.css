@@ -2406,25 +2406,145 @@ body.dark-mode .auth-footer {
 /* --- Mobile Dropdown Fixes (Task: Fix Overflow) --- */
 @media (max-width: 600px) {
 
-    /* 1. Category Dropdown Safety */
-    .custom-dropdown .dropdown-options {
-        min-width: unset;
-        width: max-content;
-        max-width: 85vw;
-        /* Strict viewport cap */
-        overflow-x: hidden;
+    /* Navbar Re-organization: Grid Layout */
+    header,
+    header.is-pinned {
+        position: relative !important;
+        top: auto !important;
+        border-radius: 0 !important;
+        background: transparent !important;
+        box-shadow: none !important;
+        backdrop-filter: none !important;
+        margin-bottom: 20px !important;
+        padding: 10px 20px !important;
+        /* Fixed side padding for consistency */
     }
 
-    /* 2. Profile/Settings Dropdown Safety */
-    .profile-dropdown-menu {
+    /* Container */
+    header .controls {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto auto;
+        grid-template-rows: auto auto;
+        gap: 10px;
+        width: 100%;
+        margin-top: 10px;
+        align-items: center;
+        transition: padding-top 0.3s ease;
+    }
+
+    /* When search floats, add padding to container to prevent jump */
+    header .controls.search-active {
+        padding-top: 70px;
+    }
+
+    /* 1. Search Bar: Default In-Flow */
+    .search-box {
+        grid-column: 1 / -1;
+        grid-row: 1;
+        width: 100%;
+        position: relative;
+        z-index: 2000;
+        transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    /* Floating State */
+    .search-box.mobile-floating {
+        position: fixed;
+        top: 15px;
+        left: 20px;
+        /* Match header padding-left */
+        width: calc(100vw - 40px);
+        /* Match header width (100vw - 20px - 20px) */
+        margin: 0;
+        z-index: 9999;
+
+        /* Premium looks */
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.12);
+        border-radius: 20px;
+        padding: 6px;
+        /* Slightly plumper when active */
+        border: 1px solid rgba(255, 255, 255, 0.6);
+
+        /* No animation to prevent 'jump', just snap to fixed but styles transition */
+    }
+
+    @keyframes slideDownMobile {
+        from {
+            transform: translateY(-100%);
+            opacity: 0;
+        }
+
+        to {
+            transform: translateY(0);
+            opacity: 1;
+        }
+    }
+
+    /* Dark Mode Search Bar */
+    body.dark-mode .search-box {
+        background: rgba(30, 30, 40, 0.9);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .search-box input {
+        width: 100%;
+    }
+
+    /* 2. Category Dropdown: Left column (Row 2) */
+    #customCategoryDropdown {
+        grid-column: 1 / 2;
+        grid-row: 2;
+        width: 100%;
+    }
+
+    #customCategoryDropdown .dropdown-selected {
+        width: 100%;
+        max-width: none;
+    }
+
+    /* 3. Settings Dropdown: Center column (Row 2) */
+    #settingsDropdown {
+        grid-column: 2 / 3;
+        grid-row: 2;
+        width: auto;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    /* 4. Auth Profile Slot: Right column (Row 2) */
+    #auth-profile-slot {
+        grid-column: 3 / 4;
+        grid-row: 2;
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        /* Align to right edge */
+    }
+
+    /* Dropdown Options Safety */
+    .custom-dropdown .dropdown-options {
+        min-width: unset;
+        width: 100%;
+        max-width: 90vw;
+        left: 0;
+        z-index: 2005;
+        /* High z-index */
+    }
+
+    /* Profile/Settings Dropdown specific alignment */
+    .profile-dropdown-menu,
+    #settingsDropdown .dropdown-options {
         width: auto;
         min-width: 200px;
-        max-width: calc(100vw - 40px);
         right: 0;
         left: auto;
     }
 
-    /* 3. Email Truncation */
+    /* Email Truncation */
     .profile-email {
         white-space: nowrap;
         overflow: hidden;
