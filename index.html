@@ -24,8 +24,14 @@
     <!-- Vercel Web Analytics -->
     <script>
         window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
+        // Only load in production to avoid local 404 errors
+        if (window.location.hostname !== '127.0.0.1' && window.location.hostname !== 'localhost') {
+            var script = document.createElement('script');
+            script.src = '/_vercel/insights/script.js';
+            script.defer = true;
+            document.head.appendChild(script);
+        }
     </script>
-    <script defer src="/_vercel/insights/script.js"></script>
 </head>
 
 <body class="dark-mode">
