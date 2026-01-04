@@ -21,10 +21,8 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
     <script src="https://cdn.jsdelivr.net/npm/fuse.js@7.0.0"></script>
     <script src="app.js?v=10" defer></script>
-    <script defer src="/_vercel/speed-insights/script.js"></script>
     <!-- Vercel Web Analytics -->
     <script>
-        window.si = window.si || function () { (window.siq = window.siq || []).push(arguments); };
         window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
         // Only load in production to avoid local 404 errors
         if (window.location.hostname !== '127.0.0.1' && window.location.hostname !== 'localhost') {
@@ -37,7 +35,8 @@
 </head>
 
 <body class="dark-mode">
-
+    <script defer src="/_vercel/speed-insights/script.js"></script>
+    <script>window.si = window.si || function () { (window.siq = window.siq || []).push(arguments); };</script>
     <!-- Auth Overlay -->
     <div id="authOverlay" class="auth-overlay hidden">
         <div class="auth-card glass-panel">
