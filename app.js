@@ -703,25 +703,11 @@ function setupEventListeners() {
       fab.classList.remove('hide-fab');
     }
 
-    // Header Floating Toggle (Docking) - Classic Desktop
-    if (window.innerWidth > 600) {
-      if (window.scrollY > 20) {
-        header?.classList.add('is-pinned');
-      } else {
-        header?.classList.remove('is-pinned');
-      }
+    // Header Floating Toggle (Docking) - Universal
+    if (window.scrollY > 20) {
+      header?.classList.add('is-pinned');
     } else {
-      // Mobile: Independent Search Float
-      const searchBox = document.querySelector('.search-box');
-      const controls = document.querySelector('header .controls');
-
-      if (window.scrollY > 50) {
-        searchBox?.classList.add('mobile-floating');
-        controls?.classList.add('search-active');
-      } else {
-        searchBox?.classList.remove('mobile-floating');
-        controls?.classList.remove('search-active');
-      }
+      header?.classList.remove('is-pinned');
     }
 
     lastScrollY = window.scrollY;

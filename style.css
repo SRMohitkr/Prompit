@@ -2407,18 +2407,7 @@ body.dark-mode .auth-footer {
 @media (max-width: 600px) {
 
     /* Navbar Re-organization: Grid Layout */
-    header,
-    header.is-pinned {
-        position: relative !important;
-        top: auto !important;
-        border-radius: 0 !important;
-        background: transparent !important;
-        box-shadow: none !important;
-        backdrop-filter: none !important;
-        margin-bottom: 20px !important;
-        padding: 10px 20px !important;
-        /* Fixed side padding for consistency */
-    }
+    /* Removed header overrides to allow sticky behavior */
 
     /* Container */
     header .controls {
@@ -2429,12 +2418,6 @@ body.dark-mode .auth-footer {
         width: 100%;
         margin-top: 10px;
         align-items: center;
-        transition: padding-top 0.3s ease;
-    }
-
-    /* When search floats, add padding to container to prevent jump */
-    header .controls.search-active {
-        padding-top: 70px;
     }
 
     /* 1. Search Bar: Default In-Flow */
@@ -2447,41 +2430,7 @@ body.dark-mode .auth-footer {
         transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
-    /* Floating State */
-    .search-box.mobile-floating {
-        position: fixed;
-        top: 15px;
-        left: 20px;
-        /* Match header padding-left */
-        width: calc(100vw - 40px);
-        /* Match header width (100vw - 20px - 20px) */
-        margin: 0;
-        z-index: 9999;
-
-        /* Premium looks */
-        background: rgba(255, 255, 255, 0.95);
-        backdrop-filter: blur(20px);
-        -webkit-backdrop-filter: blur(20px);
-        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.12);
-        border-radius: 20px;
-        padding: 6px;
-        /* Slightly plumper when active */
-        border: 1px solid rgba(255, 255, 255, 0.6);
-
-        /* No animation to prevent 'jump', just snap to fixed but styles transition */
-    }
-
-    @keyframes slideDownMobile {
-        from {
-            transform: translateY(-100%);
-            opacity: 0;
-        }
-
-        to {
-            transform: translateY(0);
-            opacity: 1;
-        }
-    }
+    /* Removed unused .mobile-floating styles */
 
     /* Dark Mode Search Bar */
     body.dark-mode .search-box {
