@@ -35,8 +35,7 @@
 </head>
 
 <body class="dark-mode">
-    <script defer src="/_vercel/speed-insights/script.js"></script>
-    <script>window.si = window.si || function () { (window.siq = window.siq || []).push(arguments); };</script>
+
     <!-- Auth Overlay -->
     <div id="authOverlay" class="auth-overlay hidden">
         <div class="auth-card glass-panel">
@@ -628,6 +627,17 @@
 
 
 
+        <!-- Vercel Speed Insights -->
+        <script>
+            window.si = window.si || function () { (window.siq = window.siq || []).push(arguments); };
+            // Only load in production to avoid local 404 errors
+            if (window.location.hostname !== '127.0.0.1' && window.location.hostname !== 'localhost') {
+                var script = document.createElement('script');
+                script.src = '/_vercel/speed-insights/script.js';
+                script.defer = true;
+                document.body.appendChild(script);
+            }
+        </script>
 </body>
 
 </html>
