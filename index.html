@@ -34,14 +34,21 @@
     </script>
 </head>
 
-<body class="dark-mode">
+<body>
+    <script>
+        (function () {
+            const theme = localStorage.getItem('theme') || 'system';
+            const isDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+            if (isDark) document.body.classList.add('dark-mode');
+        })();
+    </script>
 
     <!-- Auth Overlay -->
     <div id="authOverlay" class="auth-overlay hidden">
         <div class="auth-card glass-panel">
             <div class="auth-header">
                 <div class="auth-icon-new">
-                    <img src="logo.png" alt="Promper Saver Logo" class="brand-logo-img">
+                    <img src="logo.png" alt="Promper Saver Logo" class="brand-logo-img" width="64" height="64">
                 </div>
                 <h2>Welcome to Promper Saver</h2>
                 <p>Sign in to sync your prompts across all your devices.</p>
@@ -161,7 +168,7 @@
             <!-- Full Professional Navbar -->
             <nav class="shared-navbar glass-panel">
                 <div class="nav-brand">
-                    <img src="logo.png" alt="Promper Saver Logo" class="brand-logo-img small">
+                    <img src="logo.png" alt="Promper Saver Logo" class="brand-logo-img small" width="32" height="32">
                     <span class="brand-name">Promper Saver</span>
                 </div>
                 <div class="nav-actions">
@@ -171,7 +178,8 @@
             <div class="glass-panel shared-card-wrapper">
                 <div class="shared-header">
                     <div class="logo-area small">
-                        <img src="logo.png" alt="Promper Saver Logo" class="brand-logo-img micro">
+                        <img src="logo.png" alt="Promper Saver Logo" class="brand-logo-img micro" width="24"
+                            height="24">
                         <span>Shared via Promper Saver</span>
                     </div>
                 </div>
@@ -192,7 +200,7 @@
         <!-- Header -->
         <header class="glass-panel">
             <div class="logo-area">
-                <img src="logo.png" alt="Promper Saver Logo" class="brand-logo-img">
+                <img src="logo.png" alt="Promper Saver Logo" class="brand-logo-img" width="42" height="42">
                 <h1>Promper Saver</h1>
             </div>
 
@@ -217,6 +225,8 @@
                         <div class="dropdown-option" data-value="other">Other</div>
                     </div>
                 </div>
+
+                <!-- Moved to footer -->
 
                 <!-- ADD THIS: Auth Profile Slot -->
                 <div id="auth-profile-slot"></div>
@@ -538,6 +548,39 @@
 
     <footer class="app-footer glass-panel">
         <div class="footer-text">Made with <span>❤️</span> by SR.Mohitkr</div>
+        <div class="footer-right-content">
+            <!-- Theme Switcher (Right Side Content) -->
+            <div class="theme-switch-wrapper">
+                <button class="theme-switch-btn" data-theme="system" title="System Preference">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                        <line x1="8" y1="21" x2="16" y2="21"></line>
+                        <line x1="12" y1="17" x2="12" y2="21"></line>
+                    </svg>
+                </button>
+                <button class="theme-switch-btn" data-theme="light" title="Light Mode">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="5"></circle>
+                        <line x1="12" y1="1" x2="12" y2="3"></line>
+                        <line x1="12" y1="21" x2="12" y2="23"></line>
+                        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                        <line x1="1" y1="12" x2="3" y2="12"></line>
+                        <line x1="21" y1="12" x2="23" y2="12"></line>
+                        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+                    </svg>
+                </button>
+                <button class="theme-switch-btn" data-theme="dark" title="Dark Mode">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                    </svg>
+                </button>
+            </div>
+        </div>
         <div class="footer-links">
             <a href="https://www.youtube.com/@sr.mohitkrofficial" target="_blank" title="YouTube" class="youtube-link">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"

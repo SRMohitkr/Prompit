@@ -607,11 +607,26 @@ function setupEventListeners() {
   document.addEventListener('click', () => settingsDropdown.classList.remove('open'));
 
   // Theme
+  // Theme
   themeOption.addEventListener('click', () => {
-    document.body.classList.toggle('dark-mode');
-    const isDark = document.body.classList.contains('dark-mode');
-    localStorage.setItem('theme', isDark ? 'dark' : 'light');
-    applyTheme(); // Refresh styles if needed
+    const current = localStorage.getItem('theme') || 'system';
+    let next = 'dark'; // Default to dark if undefined
+
+    // Simple toggle logic
+    if (current === 'dark') next = 'light';
+    else if (current === 'light') next = 'dark';
+    else {
+      // If currently 'system', switch to explicit opposite of what is currently shown
+      const isDark = document.body.classList.contains('dark-mode');
+      next = isDark ? 'light' : 'dark';
+    }
+
+    localStorage.setItem('theme', next);
+    if (window.applyAppTheme) window.applyAppTheme(next);
+    else {
+      // Fallback if not ready
+      document.body.classList.toggle('dark-mode', next === 'dark');
+    }
   });
 
 
@@ -1898,8 +1913,11 @@ function saveToLocalStorage() {
 }
 
 function applyTheme() {
-  const currentTheme = localStorage.getItem('theme') || 'dark'; // Default to dark
-  if (currentTheme === 'dark') {
+  const currentTheme = localStorage.getItem('theme') || 'system';
+  if (currentTheme === 'system') {
+    const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    document.body.classList.toggle('dark-mode', isDark);
+  } else if (currentTheme === 'dark') {
     document.body.classList.add('dark-mode');
   } else {
     document.body.classList.remove('dark-mode');
@@ -2955,11 +2973,70 @@ window.createFolder = createFolder;
 // Boot Sequence: Ensure DOM is ready, then trigger initApp
 window.addEventListener('load', () => {
   initApp();
+  setupThemeLogic(); // Initialize theme headers
   NetworkManager.init();
 
   // Start background sync if queue is not empty
   syncService.process();
 });
+
+// Theme Logic (3-State)
+function setupThemeLogic() {
+  const themeBtns = document.querySelectorAll('.theme-switch-btn');
+  const savedTheme = localStorage.getItem('theme') || 'system';
+
+  function setActiveBtn(mode) {
+    themeBtns.forEach(btn => {
+      if (btn.dataset.theme === mode) btn.classList.add('active');
+      else btn.classList.remove('active');
+    });
+  }
+
+  function apply(mode) {
+    if (mode === 'system') {
+      const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      document.body.classList.toggle('dark-mode', isDark);
+    } else {
+      document.body.classList.toggle('dark-mode', mode === 'dark');
+    }
+    setActiveBtn(mode);
+  }
+
+  window.applyAppTheme = apply; // Expose for other controls
+
+  // Init
+  apply(savedTheme);
+
+  // Listeners
+  themeBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const newMode = btn.dataset.theme;
+      localStorage.setItem('theme', newMode);
+      apply(newMode);
+    });
+  });
+
+  // Handle System Change
+  try {
+    const systemMediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    if (systemMediaQuery.addEventListener) {
+      systemMediaQuery.addEventListener('change', e => {
+        const theme = localStorage.getItem('theme') || 'system';
+        if (theme === 'system') {
+          apply('system');
+        }
+      });
+    } else {
+      // Compatibility for older browsers
+      systemMediaQuery.addListener(e => {
+        const theme = localStorage.getItem('theme') || 'system';
+        if (theme === 'system') {
+          apply('system');
+        }
+      });
+    }
+  } catch (e) { }
+}
 
 // Resume sync when network returns
 window.addEventListener('online', () => {
